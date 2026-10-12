@@ -1,0 +1,304 @@
+{
+  "format": "docx",
+  "verdict": "pass",
+  "checks": [
+    {
+      "id": "package",
+      "status": "pass"
+    }
+  ],
+  "summary": {
+    "paragraphs": 2753,
+    "tables": [
+      {
+        "rows": 11,
+        "columns": 2
+      },
+      {
+        "rows": 4,
+        "columns": 2
+      },
+      {
+        "rows": 11,
+        "columns": 3
+      },
+      {
+        "rows": 7,
+        "columns": 2
+      },
+      {
+        "rows": 10,
+        "columns": 3
+      },
+      {
+        "rows": 6,
+        "columns": 2
+      },
+      {
+        "rows": 5,
+        "columns": 3
+      },
+      {
+        "rows": 7,
+        "columns": 3
+      },
+      {
+        "rows": 8,
+        "columns": 3
+      },
+      {
+        "rows": 18,
+        "columns": 3
+      },
+      {
+        "rows": 6,
+        "columns": 3
+      },
+      {
+        "rows": 9,
+        "columns": 6
+      },
+      {
+        "rows": 7,
+        "columns": 3
+      },
+      {
+        "rows": 6,
+        "columns": 3
+      },
+      {
+        "rows": 5,
+        "columns": 3
+      },
+      {
+        "rows": 5,
+        "columns": 3
+      },
+      {
+        "rows": 10,
+        "columns": 6
+      },
+      {
+        "rows": 13,
+        "columns": 4
+      },
+      {
+        "rows": 4,
+        "columns": 3
+      },
+      {
+        "rows": 8,
+        "columns": 2
+      },
+      {
+        "rows": 10,
+        "columns": 2
+      },
+      {
+        "rows": 7,
+        "columns": 2
+      },
+      {
+        "rows": 10,
+        "columns": 10
+      },
+      {
+        "rows": 9,
+        "columns": 4
+      },
+      {
+        "rows": 8,
+        "columns": 4
+      },
+      {
+        "rows": 4,
+        "columns": 3
+      },
+      {
+        "rows": 8,
+        "columns": 2
+      },
+      {
+        "rows": 4,
+        "columns": 4
+      },
+      {
+        "rows": 6,
+        "columns": 3
+      },
+      {
+        "rows": 6,
+        "columns": 4
+      },
+      {
+        "rows": 12,
+        "columns": 6
+      },
+      {
+        "rows": 10,
+        "columns": 6
+      },
+      {
+        "rows": 7,
+        "columns": 5
+      },
+      {
+        "rows": 16,
+        "columns": 6
+      },
+      {
+        "rows": 4,
+        "columns": 6
+      },
+      {
+        "rows": 8,
+        "columns": 6
+      },
+      {
+        "rows": 11,
+        "columns": 4
+      },
+      {
+        "rows": 6,
+        "columns": 4
+      },
+      {
+        "rows": 8,
+        "columns": 4
+      },
+      {
+        "rows": 11,
+        "columns": 5
+      },
+      {
+        "rows": 6,
+        "columns": 2
+      },
+      {
+        "rows": 14,
+        "columns": 4
+      },
+      {
+        "rows": 15,
+        "columns": 4
+      },
+      {
+        "rows": 8,
+        "columns": 2
+      },
+      {
+        "rows": 5,
+        "columns": 3
+      },
+      {
+        "rows": 9,
+        "columns": 4
+      },
+      {
+        "rows": 6,
+        "columns": 3
+      },
+      {
+        "rows": 7,
+        "columns": 4
+      },
+      {
+        "rows": 4,
+        "columns": 3
+      },
+      {
+        "rows": 7,
+        "columns": 3
+      },
+      {
+        "rows": 4,
+        "columns": 3
+      },
+      {
+        "rows": 5,
+        "columns": 2
+      },
+      {
+        "rows": 7,
+        "columns": 3
+      },
+      {
+        "rows": 15,
+        "columns": 5
+      },
+      {
+        "rows": 4,
+        "columns": 4
+      },
+      {
+        "rows": 10,
+        "columns": 5
+      },
+      {
+        "rows": 13,
+        "columns": 8
+      },
+      {
+        "rows": 17,
+        "columns": 5
+      },
+      {
+        "rows": 21,
+        "columns": 7
+      },
+      {
+        "rows": 14,
+        "columns": 2
+      },
+      {
+        "rows": 11,
+        "columns": 2
+      },
+      {
+        "rows": 10,
+        "columns": 5
+      },
+      {
+        "rows": 6,
+        "columns": 4
+      },
+      {
+        "rows": 3,
+        "columns": 5
+      },
+      {
+        "rows": 16,
+        "columns": 6
+      },
+      {
+        "rows": 13,
+        "columns": 4
+      },
+      {
+        "rows": 10,
+        "columns": 3
+      },
+      {
+        "rows": 13,
+        "columns": 3
+      }
+    ],
+    "sections": [
+      {
+        "page_twips": {
+          "w": "11906",
+          "h": "16838"
+        },
+        "margins_twips": {
+          "top": "1134",
+          "right": "907",
+          "bottom": "1134",
+          "left": "907",
+          "header": "720",
+          "footer": "720",
+          "gutter": "0"
+        }
+      }
+    ]
+  }
+}
