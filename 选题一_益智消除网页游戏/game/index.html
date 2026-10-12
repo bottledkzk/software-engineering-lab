@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12102a">
+<title>星尘消除</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%237c6cff'/%3E%3C/svg%3E">
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ 主菜单 HOME ============ -->
+  <section class="page is-active" id="page-home">
+    <div class="home-wrap">
+      <h1 class="logo">星尘消除</h1>
+      <p class="tagline">轻量益智消除 · 完全离线可玩 · 无广告无体力</p>
+      <div class="menu">
+        <button class="btn btn-primary" id="home-continue">开始游戏</button>
+        <button class="btn" id="home-rank">排行榜</button>
+        <button class="btn" id="home-settings">设置</button>
+      </div>
+      <p class="hint" id="home-status"></p>
+    </div>
+  </section>
+
+  <!-- ============ 关卡选择 LEVEL_SELECT ============ -->
+  <section class="page" id="page-levels">
+    <header class="bar">
+      <button class="btn btn-icon" id="levels-back" aria-label="返回">←</button>
+      <h2 class="bar-title">选择关卡</h2>
+      <span class="bar-meta" id="levels-total-stars">★ 0</span>
+    </header>
+    <nav class="tabs" id="levels-tabs" aria-label="章节"></nav>
+    <div class="level-grid" id="levels-grid"></div>
+  </section>
+
+  <!-- ============ 游戏 PLAYING ============ -->
+  <section class="page" id="page-play">
+    <header class="bar">
+      <button class="btn btn-icon" id="play-back" aria-label="返回">←</button>
+      <h2 class="bar-title" id="play-level-name">1-1</h2>
+      <span class="bar-meta" id="play-moves">剩余 0 步</span>
+    </header>
+    <div class="hud">
+      <div class="hud-item">
+        <span class="hud-label" id="play-target-label">目标</span>
+        <span class="hud-value" id="play-target">0 / 0</span>
+      </div>
+      <div class="hud-item">
+        <span class="hud-label">得分</span>
+        <span class="hud-value" id="play-score">0</span>
+      </div>
+      <div class="hud-item">
+        <span class="hud-label">金币</span>
+        <span class="hud-value" id="play-coins">0</span>
+      </div>
+    </div>
+    <div class="board-wrap">
+      <canvas id="play-board" aria-label="游戏棋盘"></canvas>
+      <div class="combo-pop" id="play-combo" aria-live="polite"></div>
+    </div>
+    <div class="items" id="play-items">
+      <button class="btn item" id="item-shuffle">
+        <span class="item-name">洗牌</span><span class="item-cost">100</span><span class="item-count" id="count-shuffle">0</span>
+      </button>
+      <button class="btn item" id="item-hammer">
+        <span class="item-name">锤子</span><span class="item-cost">150</span><span class="item-count" id="count-hammer">0</span>
+      </button>
+      <button class="btn item" id="item-steps">
+        <span class="item-name">+5 步</span><span class="item-cost">200</span><span class="item-count" id="count-steps">0</span>
+      </button>
+    </div>
+    <p class="hint" id="play-tip">点击或拖动交换相邻方块</p>
+  </section>
+
+  <!-- ============ 结算 RESULT ============ -->
+  <section class="page" id="page-result">
+    <div class="result-wrap">
+      <h2 class="result-title" id="result-title">通关成功</h2>
+      <div class="stars" id="result-stars" aria-label="星级"></div>
+      <p class="result-score" id="result-score">0</p>
+      <p class="result-sub" id="result-sub"></p>
+      <div class="menu">
+        <button class="btn btn-primary" id="result-next">下一关</button>
+        <button class="btn" id="result-retry">重玩本关</button>
+        <button class="btn" id="result-steps">花 200 金币 +5 步</button>
+        <button class="btn" id="result-back">返回选关</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 排行榜 LEADERBOARD ============ -->
+  <section class="page" id="page-rank">
+    <header class="bar">
+      <button class="btn btn-icon" id="rank-back" aria-label="返回">←</button>
+      <h2 class="bar-title">排行榜</h2>
+      <span class="bar-meta">仅本机</span>
+    </header>
+    <nav class="tabs" id="rank-tabs">
+      <button class="tab is-active" id="rank-tab-total">总星榜</button>
+      <button class="tab" id="rank-tab-level">单关榜</button>
+    </nav>
+    <div class="rank-level-pick" id="rank-level-pick"></div>
+    <ol class="rank-list" id="rank-list"></ol>
+  </section>
+
+  <!-- ============ 设置 SETTINGS ============ -->
+  <section class="page" id="page-settings">
+    <header class="bar">
+      <button class="btn btn-icon" id="settings-back" aria-label="返回">←</button>
+      <h2 class="bar-title">设置</h2>
+      <span class="bar-meta"></span>
+    </header>
+    <div class="settings">
+      <div class="setting-row">
+        <label for="settings-nickname">昵称</label>
+        <input id="settings-nickname" maxlength="8" autocomplete="off">
+      </div>
+      <div class="setting-row">
+        <label for="settings-music-on">背景音乐</label>
+        <input type="checkbox" id="settings-music-on">
+      </div>
+      <div class="setting-row">
+        <label for="settings-music-vol">音乐音量</label>
+        <input type="range" id="settings-music-vol" min="0" max="100" step="5">
+      </div>
+      <div class="setting-row">
+        <label for="settings-sfx-on">音效</label>
+        <input type="checkbox" id="settings-sfx-on">
+      </div>
+      <div class="setting-row">
+        <label for="settings-sfx-vol">音效音量</label>
+        <input type="range" id="settings-sfx-vol" min="0" max="100" step="5">
+      </div>
+      <div class="setting-row">
+        <label>离线可玩</label>
+        <span class="setting-value" id="settings-offline">检测中…</span>
+      </div>
+      <div class="setting-row">
+        <label>音效支持</label>
+        <span class="setting-value" id="settings-audio">检测中…</span>
+      </div>
+      <button class="btn btn-danger" id="settings-reset">重置进度</button>
+      <p class="hint">重置将清空关卡进度与两个榜单，恢复初始状态（金币 0、道具各 1、仅解锁 1-1），<strong>保留昵称与音量设置</strong>。</p>
+      <p class="hint" id="settings-about"></p>
+    </div>
+  </section>
+</div>
+
+<div class="banner hidden" id="banner" role="status"></div>
+
+<div class="guide hidden" id="guide">
+  <div class="guide-box">
+    <p class="guide-text" id="guide-text"></p>
+    <div class="guide-actions">
+      <button class="btn btn-primary" id="guide-next">下一步</button>
+      <button class="btn btn-ghost" id="guide-skip">跳过引导</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal hidden" id="modal">
+  <div class="modal-box">
+    <h3 id="modal-title">确认</h3>
+    <p id="modal-text"></p>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="modal-ok">确定</button>
+      <button class="btn btn-ghost" id="modal-cancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
