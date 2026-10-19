@@ -7,6 +7,7 @@
 
 import { ANIM } from './config.js';
 import { SP, idx, rowOf, colOf } from './board.js';
+import * as log from './logger.js';
 
 const CELL_COLORS = ['#ff6b81', '#ffc857', '#4ad9a4', '#4cc9f0', '#7c6cff', '#f072d8'];
 const SHAPE_COUNT = 6;
@@ -164,22 +165,23 @@ function renderLevels(state) {
   }
   if (!dom.levelsGrid) return;
   const save = state.save || { stars: {}, unlockedLevelId: '1-1' };
-  const passed = passedLevelId(save);
   const broken = state.levels.broken || [];
   dom.levelsGrid.innerHTML = '';
-  list.forEach((lv) => {
+  // 按章节过滤：只渲染当前章节的 10 关（FR-12，选关页分章展示）
+  list.filter((lv) => (lv.chapter || 1) === chapter).forEach((lv) => {
     const btn = document.createElement('button');
     const unlocked = isUnlocked(save, lv.id);
     btn.className = 'level-cell' + (broken.includes(lv.id) ? ' is-broken' : '');
     btn.disabled = !unlocked || broken.includes(lv.id);
-    const stars = save.stars ? (save.stars[lv.id] || 0) : 0;
+    const stars = Math.max(0, Math.min(3, save.stars ? (save.stars[lv.id] || 0) : 0));
+    // 星级固定 3 个槽位：实心为已获得，空心为未获得（1 星 → ★☆☆）
+    const starText = '★'.repeat(stars) + '☆'.repeat(3 - stars);
     btn.innerHTML = `<span class="lv-id">${lv.id}</span>`
-      + `<span class="lv-stars">${stars ? '★'.repeat(stars) : '☆☆☆'}</span>`
+      + `<span class="lv-stars">${starText}</span>`
       + `<span class="lv-obj">${objectiveText(lv)}</span>`;
     if (unlocked && !broken.includes(lv.id)) btn.addEventListener('click', () => emit('onStartLevel', lv.id));
     dom.levelsGrid.appendChild(btn);
   });
-  void passed;
 }
 
 function renderPlay(state) {
@@ -317,10 +319,22 @@ function offlineText(offline) {
 export function playSequence(events, opts = {}) {
   const speed = Math.max(0.35, Math.min(2, opts.speed || 1));
   const list = Array.isArray(events) ? events : [events];
+  const end = log.time('perf.playSequence', { steps: list.length, speed, kinds: list.map((e) => e && e.type) });
   setInputLocked(true);
+  log.debug('anim.lock', { locked: true, steps: list.length });
   return list.reduce((chain, ev) => chain.then(() => runOne(ev, speed)), Promise.resolve())
-    .then(() => { setInputLocked(false); return { ok: true }; })
-    .catch(() => { setInputLocked(false); return { ok: false }; });
+    .then(() => {
+      setInputLocked(false);
+      log.debug('anim.lock', { locked: false });
+      end({ ok: true });
+      return { ok: true };
+    })
+    .catch((e) => {
+      setInputLocked(false);
+      log.error('anim.failed', { message: e && e.message ? e.message : String(e) });
+      end({ ok: false });
+      return { ok: false };
+    });
 }
 
 function runOne(ev, speed) {
@@ -382,6 +396,7 @@ function animateCascade(ev, speed) {
     if (b && (!a || b.color !== a.color || b.special !== a.special)) cleared.push(i);
   }
   boardRef = after;
+  log.debug('anim.cascade', { cleared: cleared.length, changed: changed.length, beforeIsNull: !before });
   return new Promise((resolve) => {
     // 阶段 1：消除闪烁
     const d1 = Math.max(1, ANIM.clear / speed);

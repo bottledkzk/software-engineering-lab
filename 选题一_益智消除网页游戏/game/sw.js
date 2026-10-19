@@ -3,7 +3,7 @@
 //      → activate 清理旧版本缓存 → message 回报缓存版本（API-41）
 // 约束：单个资源失败不阻断安装（ERR-07 降级）；非 GET / 跨源请求直接放行。
 
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE_NAME = `stardust-${VERSION}`;
 const PRECACHE = [
   './',
@@ -15,6 +15,7 @@ const PRECACHE = [
   './src/board.js',
   './src/storage.js',
   './src/audio.js',
+  './src/logger.js',
   './src/ui.js',
   './src/main.js',
 ];
