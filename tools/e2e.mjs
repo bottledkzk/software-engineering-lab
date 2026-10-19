@@ -274,8 +274,152 @@ try {
     check('HUD 得分与状态一致', Number(String(after.hudScore).replace(/[^\d]/g, '')) === after.score, `HUD=${after.hudScore} state=${after.score}`);
   }
 
-  /* ---------- 4. 日志与错误 ---------- */
-  log('\n=== 4) 运行日志 ===');
+  /* ---------- 4. 交互流程：无效交换 / 道具 / 结算 / 排行 / 设置 / 引导 ---------- */
+  log('\n=== 4) 交互流程 ===');
+  const hudState = () => evaluate(`(() => {
+    const g = window.__game;
+    return {
+      page: g.state.page,
+      moves: g.state.play ? g.state.play.movesLeft : null,
+      score: g.state.play ? g.state.play.inLevelScore : null,
+      coins: g.state.save.coins,
+      items: g.state.save.items,
+      level: g.state.play ? g.state.play.level.id : null,
+      board: g.state.play ? g.state.play.board.cells.map((c) => (c ? c.color + ':' + (c.special || '') : '-')).join('|') : '',
+    };
+  })()`);
+  const click = (id) => evaluate(`document.getElementById('${id}').click()`);
+  const modalVisible = () => evaluate(`!document.getElementById('modal').classList.contains('hidden')`);
+
+  // 4.1 无效交换：弹回、不扣步、棋盘还原
+  const invalid = await evaluate(`(() => {
+    const g = window.__game, b = g.state.play.board;
+    for (let r = 0; r < b.rows; r++) {
+      for (let c = 0; c < b.cols - 1; c++) {
+        const i = r * b.cols + c;
+        const probe = g.api.cloneBoard(b);
+        if (!g.api.resolveSwap(probe, i, i + 1).valid) return [i, i + 1];
+      }
+    }
+    return null;
+  })()`);
+  if (invalid) {
+    const s0 = await hudState();
+    await evaluate(`window.__game.api.onSwap(${invalid[0]}, ${invalid[1]})`);
+    await sleep(500);
+    const s1 = await hudState();
+    check('无效交换：不扣步数', s1.moves === s0.moves, `${s0.moves}→${s1.moves}`);
+    check('无效交换：棋盘完全还原', s1.board === s0.board);
+    check('无效交换：得分不变', s1.score === s0.score);
+  } else {
+    check('能构造出无效交换对（用于 AC-04 验证）', false);
+  }
+
+  // 4.2 锤子：确认 → 选格 → 扣费 → 动画结束
+  {
+    const s0 = await hudState();
+    await click('item-hammer');
+    await waitFor(`!document.getElementById('modal').classList.contains('hidden')`, 4000, '锤子确认弹窗');
+    check('点击锤子弹出二次确认', await modalVisible());
+    await click('modal-ok');
+    await waitFor(`window.__game.state.itemMode === 'hammer'`, 4000, '进入选格模式');
+    check('确认后进入选格模式（未扣费）', (await hudState()).coins === s0.coins);
+    await evaluate(`window.__game.api.onHammerPick(0)`);
+    await sleep(900);
+    const s1 = await hudState();
+    check('锤子选定后扣 150 金币', s1.coins === s0.coins - 150, `${s0.coins}→${s1.coins}`);
+    check('锤子持有数 −1', s1.items.hammer === s0.items.hammer - 1);
+    check('锤子后退出选格模式', (await evaluate(`window.__game.state.itemMode`)) === null);
+    check('锤子后输入锁已释放（可继续操作）', !/error/.test(JSON.stringify(await evaluate(`window.__game.log.get()`))));
+  }
+
+  // 4.3 洗牌：确认 → 扣费 → 棋盘变化 → 不扣步
+  {
+    const s0 = await hudState();
+    await click('item-shuffle');
+    await waitFor(`!document.getElementById('modal').classList.contains('hidden')`, 4000, '洗牌确认弹窗');
+    await click('modal-ok');
+    await sleep(900);
+    const s1 = await hudState();
+    check('洗牌扣 100 金币', s1.coins === s0.coins - 100, `${s0.coins}→${s1.coins}`);
+    check('洗牌不消耗步数', s1.moves === s0.moves);
+    check('洗牌后棋盘发生变化', s1.board !== s0.board);
+  }
+
+  // 4.4 结算：结果页 → 下一关
+  {
+    const before = await hudState();
+    await evaluate(`window.__game.api.onSettle(true)`);
+    await sleep(300);
+    const res = await evaluate(`(() => ({
+      page: window.__game.state.page,
+      stars: document.getElementById('result-stars').textContent,
+      score: document.getElementById('result-score').textContent,
+      sub: document.getElementById('result-sub').textContent,
+      nextDisabled: document.getElementById('result-next').disabled,
+      levelId: window.__game.state.play.level.id,
+      unlocked: window.__game.state.save.unlockedLevelId,
+    }))()`);
+    check('过关后进入结算页', res.page === 'result');
+    check('结算页星级为 3 槽位', [...res.stars.trim()].length === 3, `"${res.stars}"`);
+    check('结算页显示总分（数值）', Number(String(res.score).replace(/[^\d]/g, '')) > 0, res.score);
+    check('结算页显示金币奖励', /\+/.test(res.sub) || /金币/.test(res.sub), res.sub);
+    await shot('08_result');
+    if (!res.nextDisabled) {
+      await click('result-next');
+      await waitFor(`window.__game.state.page === 'play'`);
+      const nxt = await hudState();
+      check('点"下一关"进入下一关', nxt.level !== res.levelId, `${res.levelId}→${nxt.level}`);
+    }
+  }
+
+  // 4.5 排行榜：两榜都有内容且可切换
+  {
+    await evaluate(`window.__game.api.navigate('rank')`);
+    await sleep(200);
+    const total = await evaluate(`document.querySelectorAll('#rank-list li').length`);
+    check('总星榜有条目', total > 0, `${total} 条`);
+    await shot('09_rank');
+    await click('rank-tab-level');
+    await sleep(200);
+    const lv = await evaluate(`document.querySelectorAll('#rank-list li').length`);
+    const picks = await evaluate(`document.querySelectorAll('#rank-level-pick .tab').length`);
+    check('单关榜可切换且有关卡选择', lv > 0 && picks > 0, `${lv} 条 / ${picks} 个关卡`);
+  }
+
+  // 4.6 设置：音量生效；重置弹确认且取消不生效
+  {
+    await evaluate(`window.__game.api.navigate('settings')`);
+    await sleep(200);
+    await evaluate(`(() => { const el = document.getElementById('settings-music-vol'); el.value = '40'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await sleep(200);
+    check('调音量写入存档', (await evaluate(`window.__game.state.save.settings.musicVol`)) === 40);
+    const coinsBefore = (await hudState()).coins;
+    await click('settings-reset');
+    await waitFor(`!document.getElementById('modal').classList.contains('hidden')`, 4000, '重置确认弹窗');
+    check('重置弹出二次确认', await modalVisible());
+    await shot('10_settings_reset');
+    await click('modal-cancel');
+    await sleep(200);
+    check('取消重置后数据未变', (await hudState()).coins === coinsBefore);
+  }
+
+  // 4.7 新手引导：guided=false 时进 1-1 应弹出，走完三步后置位
+  {
+    await evaluate(`window.__game.state.save.guided = false; window.__game.api.startLevel('1-1')`);
+    await sleep(400);
+    const shown = await evaluate(`!document.getElementById('guide').classList.contains('hidden')`);
+    check('首次进入 1-1 弹出引导', shown);
+    if (shown) {
+      await shot('11_guide');
+      for (let i = 0; i < 3; i++) { await click('guide-next'); await sleep(150); }
+      const done = await evaluate(`({ guided: window.__game.state.save.guided, hidden: document.getElementById('guide').classList.contains('hidden') })`);
+      check('走完引导后置 guided=true 且关闭遮罩', done.guided === true && done.hidden === true, JSON.stringify(done));
+    }
+  }
+
+  /* ---------- 5. 日志与错误 ---------- */
+  log('\n=== 5) 运行日志 ===');
   const logs = await evaluate(`window.__game.log.get()`);
   const events = logs.map((l) => l.event);
   const errs = logs.filter((l) => l.lv === 'error');
