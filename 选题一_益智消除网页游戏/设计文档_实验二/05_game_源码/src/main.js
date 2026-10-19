@@ -271,6 +271,7 @@ export function startLevel(levelId) {
   };
   state.itemMode = null;
   state.result = null;
+  state.play.targetLabel = objectiveState(level, state.play.clearedByColor, 0).label;
   ui.clearSelection();
   navigate('play');
   maybeStartGuide(levelId);
@@ -296,7 +297,10 @@ export async function onSwap(a, b) {
   p.movesLeft -= 1;
   p.swaps += 1;
   p.inLevelScore += result.score;
-  (result.clearedByColor || []).forEach((n, color) => { p.clearedByColor[color] = (p.clearedByColor[color] || 0) + n; });
+  Object.entries(result.clearedByColor || {}).forEach(([color, n]) => {
+    const ci = Number(color);
+    p.clearedByColor[ci] = (p.clearedByColor[ci] || 0) + n;
+  });
 
   const mid = cloneBoard(before);
   const t = mid.cells[a]; mid.cells[a] = mid.cells[b]; mid.cells[b] = t;
@@ -326,6 +330,7 @@ export async function onSwap(a, b) {
 function afterMove() {
   const p = state.play;
   const obj = objectiveState(p.level, p.clearedByColor, p.inLevelScore);
+  p.targetLabel = obj.label;
   renderAll();
   if (obj.met) return onSettle(true);
   if (p.movesLeft <= 0) return onSettle(false);
@@ -585,7 +590,15 @@ function registerServiceWorker() {
     return;
   }
   try {
-    navigator.serviceWorker.register('sw.js')
+    const hadController = !!navigator.serviceWorker.controller;
+    let refreshing = false;
+    // 新版本 SW 接管后自动刷新一次，避免 cache-first 让玩家停留在旧代码
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || refreshing) return;
+      refreshing = true;
+      location.reload();
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
       .then(() => { state.offline = { sw: 'ok' }; renderAll(); })
       .catch(() => { state.offline = { sw: 'unavailable' }; renderAll(); });
   } catch (e) {

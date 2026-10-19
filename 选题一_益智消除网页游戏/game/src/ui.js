@@ -187,7 +187,7 @@ function renderPlay(state) {
   if (!p) return;
   if (dom.playLevelName) dom.playLevelName.textContent = `${p.level.id}　${p.level.name || ''}`.trim();
   if (dom.playMoves) dom.playMoves.textContent = `剩余 ${p.movesLeft} 步`;
-  if (dom.playScore) dom.playScore.textContent = String(p.score);
+  if (dom.playScore) dom.playScore.textContent = String(p.inLevelScore);
   if (dom.playCoins) dom.playCoins.textContent = String(state.save.coins);
   if (dom.playTarget) dom.playTarget.textContent = p.targetLabel;
   if (dom.playTargetLabel) dom.playTargetLabel.textContent = p.level.objectiveType === 'clear' ? '目标色' : '目标分';
@@ -384,48 +384,43 @@ function animateCascade(ev, speed) {
   boardRef = after;
   return new Promise((resolve) => {
     // 阶段 1：消除闪烁
-    const d1 = ANIM.clear / speed;
+    const d1 = Math.max(1, ANIM.clear / speed);
     const start1 = now();
     const step1 = () => {
       const t = Math.min(1, (now() - start1) / d1);
-      if (t < 1) {
-        anim = { kind: 'clear', dur: d1, board: after, draw: () => drawBoard(after, { flash: cleared, flashStrength: 1 - t }) };
-        requestFrame();
-        return;
-      }
+      drawBoard(after, { flash: cleared, flashStrength: 1 - t });
+      if (t < 1) { requestAnimationFrame(step1); return; }
       // 阶段 2：新方块下落
-      const d2 = ANIM.fall / speed;
+      const d2 = Math.max(1, ANIM.fall / speed);
       const start2 = now();
       const step2 = () => {
-        const t = Math.min(1, (now() - start2) / d2);
-        anim = {
-          kind: 'fall', dur: d2, board: after,
-          draw: () => drawBoard(after, { offsetFor: (i) => (changed.includes(i) ? { dx: 0, dy: -cellSize * 1.6 * (1 - easeOut(t)) } : null) }),
-        };
-        if (t < 1) { requestFrame(); return; }
-        anim = null;
+        const t2 = Math.min(1, (now() - start2) / d2);
+        drawBoard(after, {
+          offsetFor: (i) => (changed.includes(i) ? { dx: 0, dy: -cellSize * 1.6 * (1 - easeOut(t2)) } : null),
+        });
+        if (t2 < 1) { requestAnimationFrame(step2); return; }
         drawBoard(after, {});
         resolve();
       };
-      step2();
+      requestAnimationFrame(step2);
     };
-    step1();
+    requestAnimationFrame(step1);
   });
 }
 
 function animateShuffle(speed) {
   const board = boardRef;
   return new Promise((resolve) => {
-    const dur = ANIM.fall / speed;
+    const dur = Math.max(1, ANIM.fall / speed);
     const start = now();
     const step = () => {
       const t = Math.min(1, (now() - start) / dur);
       drawBoard(board, { globalAlpha: 0.35 + 0.65 * t, scale: 0.96 + 0.04 * t });
-      if (t < 1) { requestFrame(); return; }
+      if (t < 1) { requestAnimationFrame(step); return; }
       drawBoard(board, {});
       resolve();
     };
-    step();
+    requestAnimationFrame(step);
   });
 }
 
