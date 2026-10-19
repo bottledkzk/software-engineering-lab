@@ -373,12 +373,14 @@ function gravityAndRefill(board, rng) {
 /**
  * FR-02/FR-03/FR-04/FR-06：执行一次交换并完整结算（消除 → 连锁 → 下落补充 → 死局洗牌）
  * @returns {{valid:boolean, score:number, clearedTotal:number, clearedByColor:Object,
- *            combos:Array, specialsCreated:Array, crossBlast:boolean, shuffled:boolean}}
+ *            combos:Array, specialsCreated:Array, crossBlast:boolean, shuffled:boolean,
+ *            steps:Array<{comboIndex:number, cleared:number[], score:number, snapshot:Object}>}}
+ *          steps 供表现层逐帧回放：每一步的「被消除格」与「下落补充后的棋盘快照」。
  */
 export function resolveSwap(board, a, b, rng = defaultRng) {
   const result = {
     valid: false, score: 0, clearedTotal: 0, clearedByColor: {},
-    combos: [], specialsCreated: [], crossBlast: false, shuffled: false,
+    combos: [], specialsCreated: [], crossBlast: false, shuffled: false, steps: [],
   };
 
   swapCells(board, a, b);
@@ -473,8 +475,11 @@ export function resolveSwap(board, a, b, rng = defaultRng) {
       result.specialsCreated.push({ index: spawn, special: g.special, color: g.color });
     }
 
+    const clearedNow = [...toClear].filter((i) => board.cells[i]);
     for (const i of toClear) board.cells[i] = null;
     gravityAndRefill(board, rng);
+    // 供 UI 逐帧回放：本步消除格 + 补充后的快照（FR-16：动画只回放已确定结果）
+    result.steps.push({ comboIndex, cleared: clearedNow, score: gained, snapshot: cloneBoard(board) });
   }
 
   return result;
@@ -487,8 +492,10 @@ export function applyHammer(board, i, rng = defaultRng) {
   const color = cell.color;
   board.cells[i] = null;
   gravityAndRefill(board, rng);
-  if (isDeadlock(board)) shuffleBoard(board, rng);
-  return { ok: true, color, scored: 0 };
+  const shuffled = isDeadlock(board);
+  if (shuffled) shuffleBoard(board, rng);
+  // steps 供 UI 回放（与 resolveSwap 同构；洗牌时以洗牌后的棋盘作为快照）
+  return { ok: true, color, scored: 0, cleared: [i], snapshot: cloneBoard(board), shuffled };
 }
 
 /** FR-09 洗牌道具：与死局洗牌效果相同（免费洗牌不可主动触发） */

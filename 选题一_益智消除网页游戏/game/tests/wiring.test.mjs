@@ -38,6 +38,20 @@ check('页面包含 6 个页面容器', ['page-home', 'page-levels', 'page-play'
 check('关键交互元素齐备（棋盘/道具/引导/横幅/弹窗）',
   ['play-board', 'item-shuffle', 'item-hammer', 'item-steps', 'guide', 'guide-next', 'banner', 'modal', 'modal-ok'].every((id) => htmlIds.has(id)));
 check('入口以 module script 加载 src/main.js', /<script[^>]+type="module"[^>]+src="src\/main\.js"/.test(html));
+check('正式版不引用测试模块（dev-main / devtools / logger）', !/dev-main|devtools|logger/.test(html));
+
+// 测试版入口：dev.html 由 tools/make-dev-page.mjs 从 index.html 生成，二者必须保持同步
+let renderDevHtml = null;
+try { ({ renderDevHtml } = await import('../../../tools/make-dev-page.mjs')); } catch (e) { /* 单独分发源码时无 tools，降级为存在性检查 */ }
+check('测试版入口 dev.html 存在', exists('dev.html'));
+if (exists('dev.html')) {
+  check('测试版 dev.html 入口为 src/dev-main.js', /<script[^>]+type="module"[^>]+src="src\/dev-main\.js"/.test(read('dev.html')));
+  if (renderDevHtml) {
+    let inSync = false;
+    try { inSync = renderDevHtml(html) === read('dev.html'); } catch (e) { inSync = false; }
+    check('dev.html 与 index.html 保持同步（可脚本重建）', inSync, inSync ? '' : '请运行 node tools/make-dev-page.mjs');
+  }
+}
 
 // ② 页面引用与 import 路径（动态扫描 src/ 下全部模块，避免新增文件被漏检）
 const srcFiles = fs.readdirSync(path.join(gameDir, 'src')).filter((f) => f.endsWith('.js')).map((f) => 'src/' + f);

@@ -2,11 +2,35 @@
 
 对应实验一《01_需求分析文档》与实验二《01_设计文档》的实现阶段。**纯 HTML5 + 原生 ES 模块，零依赖、零构建**（满足 NFR-01e 资源轻量、NFR-02c 无插件依赖）。
 
+## 版本区分（正式版 / 测试版）
+
+| 版本 | 入口 | 说明 |
+| --- | --- | --- |
+| **正式版** | `index.html` | 玩家版本：**无调试面板、无 `window.__game`、不写运行日志**，只有游戏本身 |
+| **测试版** | `dev.html` | 在正式版基础上注入运行日志、调试面板（`?debug=1` 或按 D 键）与 `window.__game` 自动化钩子；左上角有"测试版"角标 |
+
+- `dev.html` **由脚本从 `index.html` 生成**，正文完全一致，只有两处差异（入口脚本、角标/标题）：
+  ```
+  node tools/make-dev-page.mjs      # 修改 index.html 后请重跑；接线测试会校验两者同步
+  ```
+- 端到端测试默认打测试版：`node tools/e2e.mjs`（`--page=/index.html` 可切换）；它会额外验证**正式版不暴露任何调试痕迹**。
+- `?demo=1`（预置进度）两个版本都支持，用于现场演示。
+
+## 代码归属（小组分工：玩法 / 视觉）
+
+| 领域 | 负责人 | 主要文件 | 约定 |
+| --- | --- | --- | --- |
+| **玩法**（规则、数值、关卡、存档、结算） | 邓淇阳 | `src/board.js`、`src/score.js`、`src/levels.js`、`src/storage.js`、`src/config.js`、`src/main.js` | 规则/数值改动必须同步跑 `tests/logic.test.mjs`、`tests/settlement.test.mjs` |
+| **视觉**（布局、样式、动画、特效、音效表现） | 【成员B】 | `index.html`、`styles.css`、`src/ui.js`、`src/audio.js` | 动画只回放 `resolveSwap`/`applyHammer` 返回的 `steps`，**不得改判定**（设计文档 FR-16） |
+| 接口契约（双方共用） | — | 设计文档 §6.1 的 51 条 `API-*` | 改函数签名须同步文档，否则 `tests/api-conformance.test.mjs` 会失败 |
+
+> 视觉改动的自测方式：`dev.html?debug=1` 打开面板 → 复现问题 → 「复制日志」贴给玩法侧；约定每条缺陷先补一条 e2e 断言再修。
 ## 目录结构
 
 ```
 game/
-├── index.html            # 入口页面：6 个页面容器 + 引导遮罩 + 提示条 + 确认弹窗（FR-12）
+├── index.html            # 正式版入口：6 个页面容器 + 引导遮罩 + 提示条 + 确认弹窗（FR-12）
+├── dev.html              # 测试版入口（由 tools/make-dev-page.mjs 从 index.html 生成）：6 个页面容器 + 引导遮罩 + 提示条 + 确认弹窗（FR-12）
 ├── styles.css            # 移动优先样式；触控目标 ≥44px；≥360×640 自适应（NFR-02b/03c）
 ├── sw.js                 # 离线缓存：预缓存 + cache-first 后台更新 + 版本清理（FR-20、API-38~41）
 ├── src/
@@ -15,6 +39,10 @@ game/
 │   ├── levels.js         # 30 关配置（FR-08，数据驱动）+ 配置校验（FR-05 异常处理）
 │   ├── board.js          # 核心玩法引擎：棋盘/交换/消除/连锁/特殊方块/死局洗牌（FR-01~FR-06）
 │   ├── storage.js        # 存档：损坏备份、版本迁移、写入失败、降级（FR-11、7.2）
+│   ├── log.js            # 日志门面（正式版为空实现，零副作用）
+│   ├── logger.js         # 运行日志实现（环形缓冲/持久化/面板/导出，仅测试版加载）
+│   ├── devtools.js       # 测试版注入：日志面板 + window.__game
+│   ├── dev-main.js       # 测试版入口（dev.html 使用）
 │   ├── audio.js          # 音效与 BGM：Web Audio 合成、懒加载、静默降级（FR-15、API-27~31）
 │   ├── ui.js             # 表现层：Canvas 2D 渲染、双编码、输入（点击/拖拽/键盘）、动画、引导（API-32~37）
 │   └── main.js           # 应用层：状态机、流程编排、结算与排行榜、存档时机（API-21~26、42~44）

@@ -14,6 +14,7 @@ const args = Object.fromEntries(process.argv.slice(2).map((a) => {
   return m ? [m[1], m[2] === undefined ? true : m[2]] : [a, true];
 }));
 const BASE = args.base || 'http://127.0.0.1:8123';
+const PAGE = args.page || '/dev.html';        // 默认打测试版；--page=/index.html 可测正式版
 const OUT = path.resolve(args.out || path.join(process.cwd(), '_e2e'));
 const PORT = Number(args.port || 9333);
 const KEEP = !!args.keep;
@@ -90,7 +91,7 @@ if (!browserPath) {
   process.exit(2);
 }
 log(`浏览器: ${browserPath}`);
-log(`目标: ${BASE}/?demo=1&debug=1    输出: ${OUT}\n`);
+log(`目标: ${BASE}${PAGE}?demo=1&debug=1    输出: ${OUT}\n`);
 
 const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stardust-e2e-'));
 const child = spawn(browserPath, [
@@ -187,7 +188,7 @@ try {
 
   /* ---------- 1. 打开游戏 ---------- */
   log('=== 1) 启动与首屏 ===');
-  await cdp.send('Page.navigate', { url: `${BASE}/?demo=1&debug=1` });
+  await cdp.send('Page.navigate', { url: `${BASE}${PAGE}?demo=1&debug=1` });
   await waitFor('window.__game && window.__game.state && window.__game.state.page', 12000, 'game boot');
   const boot = await evaluate(`(() => {
     const g = window.__game;
@@ -436,6 +437,24 @@ try {
   fs.writeFileSync(path.join(OUT, 'console.txt'), consoleLines.join('\n'), 'utf8');
   log(`\n  日志已导出: ${path.join(OUT, 'page-logs.json')}（${logs.length} 条）`);
   log(`  控制台输出: ${path.join(OUT, 'console.txt')}（${consoleLines.length} 行）`);
+
+  /* ---------- 6. 正式版隔离检查（放在最后：会离开测试版页面） ---------- */
+  log('\n=== 6) 正式版隔离检查（index.html）===');
+  await cdp.send('Page.navigate', { url: `${BASE}/index.html?demo=1&debug=1` });
+  await sleep(1600);
+  const prod = await evaluate(`({
+    hasGame: typeof window.__game !== 'undefined',
+    hasPanel: !!document.getElementById('debug-panel'),
+    hasBadge: !!document.getElementById('dev-badge'),
+    activePage: document.querySelector('.page.is-active') ? document.querySelector('.page.is-active').id : null,
+    title: document.title,
+  })`);
+  check('正式版不暴露 window.__game', prod.hasGame === false, String(prod.hasGame));
+  check('正式版无调试面板', prod.hasPanel === false);
+  check('正式版无"测试版"角标', prod.hasBadge === false);
+  check('正式版标题不含"测试版"', !/测试版/.test(prod.title), prod.title);
+  check('正式版正常启动到首页', prod.activePage === 'page-home', String(prod.activePage));
+  await shot('12_production');
 } catch (e) {
   console.error('\n运行失败:', e && e.message ? e.message : e);
   fail.push('harness: ' + (e && e.message));

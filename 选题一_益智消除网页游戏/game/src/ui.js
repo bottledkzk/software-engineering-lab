@@ -7,7 +7,7 @@
 
 import { ANIM } from './config.js';
 import { SP, idx, rowOf, colOf } from './board.js';
-import * as log from './logger.js';
+import * as log from './log.js';
 
 const CELL_COLORS = ['#ff6b81', '#ffc857', '#4ad9a4', '#4cc9f0', '#7c6cff', '#f072d8'];
 const SHAPE_COUNT = 6;

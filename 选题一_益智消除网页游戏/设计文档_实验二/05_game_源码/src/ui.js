@@ -7,6 +7,7 @@
 
 import { ANIM } from './config.js';
 import { SP, idx, rowOf, colOf } from './board.js';
+import * as log from './log.js';
 
 const CELL_COLORS = ['#ff6b81', '#ffc857', '#4ad9a4', '#4cc9f0', '#7c6cff', '#f072d8'];
 const SHAPE_COUNT = 6;
@@ -164,28 +165,32 @@ function renderLevels(state) {
   }
   if (!dom.levelsGrid) return;
   const save = state.save || { stars: {}, unlockedLevelId: '1-1' };
-  const passed = passedLevelId(save);
   const broken = state.levels.broken || [];
   dom.levelsGrid.innerHTML = '';
-  list.forEach((lv) => {
+  // 按章节过滤：只渲染当前章节的 10 关（FR-12，选关页分章展示）
+  list.filter((lv) => (lv.chapter || 1) === chapter).forEach((lv) => {
     const btn = document.createElement('button');
     const unlocked = isUnlocked(save, lv.id);
     btn.className = 'level-cell' + (broken.includes(lv.id) ? ' is-broken' : '');
     btn.disabled = !unlocked || broken.includes(lv.id);
-    const stars = save.stars ? (save.stars[lv.id] || 0) : 0;
+    const stars = Math.max(0, Math.min(3, save.stars ? (save.stars[lv.id] || 0) : 0));
+    // 星级固定 3 个槽位：实心为已获得，空心为未获得（1 星 → ★☆☆）
+    const starText = '★'.repeat(stars) + '☆'.repeat(3 - stars);
     btn.innerHTML = `<span class="lv-id">${lv.id}</span>`
-      + `<span class="lv-stars">${stars ? '★'.repeat(stars) : '☆☆☆'}</span>`
+      + `<span class="lv-stars">${starText}</span>`
       + `<span class="lv-obj">${objectiveText(lv)}</span>`;
     if (unlocked && !broken.includes(lv.id)) btn.addEventListener('click', () => emit('onStartLevel', lv.id));
     dom.levelsGrid.appendChild(btn);
   });
-  void passed;
 }
 
 function renderPlay(state) {
   const p = state.play;
   if (!p) return;
-  if (dom.playLevelName) dom.playLevelName.textContent = `${p.level.id}　${p.level.name || ''}`.trim();
+  if (dom.playLevelName) {
+    const nm = p.level.name ? String(p.level.name) : '';
+    dom.playLevelName.textContent = nm && !nm.includes(p.level.id) ? `${p.level.id}　${nm}` : p.level.id;
+  }
   if (dom.playMoves) dom.playMoves.textContent = `剩余 ${p.movesLeft} 步`;
   if (dom.playScore) dom.playScore.textContent = String(p.inLevelScore);
   if (dom.playCoins) dom.playCoins.textContent = String(state.save.coins);
@@ -317,10 +322,22 @@ function offlineText(offline) {
 export function playSequence(events, opts = {}) {
   const speed = Math.max(0.35, Math.min(2, opts.speed || 1));
   const list = Array.isArray(events) ? events : [events];
+  const end = log.time('perf.playSequence', { steps: list.length, speed, kinds: list.map((e) => e && e.type) });
   setInputLocked(true);
+  log.debug('anim.lock', { locked: true, steps: list.length });
   return list.reduce((chain, ev) => chain.then(() => runOne(ev, speed)), Promise.resolve())
-    .then(() => { setInputLocked(false); return { ok: true }; })
-    .catch(() => { setInputLocked(false); return { ok: false }; });
+    .then(() => {
+      setInputLocked(false);
+      log.debug('anim.lock', { locked: false });
+      end({ ok: true });
+      return { ok: true };
+    })
+    .catch((e) => {
+      setInputLocked(false);
+      log.error('anim.failed', { message: e && e.message ? e.message : String(e) });
+      end({ ok: false });
+      return { ok: false };
+    });
 }
 
 function runOne(ev, speed) {
@@ -369,9 +386,122 @@ function lerpCell(fromIndex, toIndex, t) {
   return { dx: c0 * cellSize * (1 - t), dy: r0 * cellSize * (1 - t) };
 }
 
+/** 通用定时动画：drawFrame(t∈[0,1])；自驱动 rAF，返回 Promise */
+function animateTimed(dur, drawFrame) {
+  return new Promise((resolve) => {
+    const start = now();
+    const tick = () => {
+      const t = Math.min(1, (now() - start) / dur);
+      drawFrame(t);
+      if (t < 1) { requestAnimationFrame(tick); return; }
+      resolve();
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+/** 按"方块描述列表"渲染一帧（消除/下落阶段用，允许任意坐标、缩放与透明度） */
+function renderFrame(tiles) {
+  if (!canvasCtx || !boardRef) return;
+  const ctx = canvasCtx;
+  ctx.clearRect(0, 0, cellSize * boardRef.cols, cellSize * boardRef.rows);
+  const pad = Math.max(2, cellSize * 0.06);
+  const base = cellSize - pad * 2;
+  tiles.forEach(({ cell, x, y, scale = 1, alpha = 1 }) => {
+    const size = base * scale;
+    const left = x * cellSize + pad + (base - size) / 2;
+    const top = y * cellSize + pad + (base - size) / 2;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    drawTile(ctx, left, top, size, cell, 0);
+    ctx.restore();
+  });
+}
+
+/**
+ * 消除动画（三段式，对齐开心消消乐手感；FR-16：动画只回放已确定结果）
+ *   ① 被消除方块缩小淡出 → 留出空位
+ *   ② 同列上方方块下落填补
+ *   ③ 新方块从棋盘上方落入顶部空位
+ * 数据来自 resolveSwap / applyHammer 返回的 steps（每步 cleared + snapshot）。
+ */
 function animateCascade(ev, speed) {
+  const steps = Array.isArray(ev.steps) ? ev.steps.filter((s) => s && Array.isArray(s.cleared)) : [];
+  if (!steps.length) return animateCascadeFallback(ev, speed);
+
+  const startBoard = ev.before || boardRef;
+  boardRef = startBoard;
+  log.debug('anim.cascade.steps', { steps: steps.length, cleared: steps.map((s) => s.cleared.length) });
+
+  let current = startBoard;
+  return steps.reduce((chain, step, k) => chain.then(() => {
+    const ease = 1 / (1 + 0.12 * k);            // 连锁越深节奏略快
+    return playCascadeStep(current, step, speed * ease).then((next) => {
+      current = next;
+      boardRef = next;
+      return next;
+    });
+  }), Promise.resolve(startBoard)).then((finalBoard) => {
+    boardRef = finalBoard;
+    drawBoard(finalBoard, {});
+    return finalBoard;
+  });
+}
+
+/** 单步：淡出 → 下落 + 补位 */
+function playCascadeStep(current, step, speed) {
+  const rows = current.rows;
+  const cols = current.cols;
+  const clearedSet = new Set(step.cleared.filter((i) => current.cells[i]));
+  if (!clearedSet.size) return Promise.resolve(current);
+
+  const clearedRowsByCol = Array.from({ length: cols }, () => []);
+  clearedSet.forEach((i) => clearedRowsByCol[colOf(current, i)].push(rowOf(current, i)));
+  clearedRowsByCol.forEach((arr) => arr.sort((x, y) => x - y));
+
+  const snapshot = step.snapshot || current;
+  const dOut = Math.max(70, ANIM.clear / speed / 1.6);
+  const dFall = Math.max(140, ANIM.fall / speed);
+
+  return animateTimed(dOut, (t) => {
+    const tiles = [];
+    for (let i = 0; i < current.cells.length; i++) {
+      const cell = current.cells[i];
+      if (!cell) continue;
+      const r = rowOf(current, i);
+      const c = colOf(current, i);
+      if (clearedSet.has(i)) tiles.push({ cell, x: c, y: r, scale: 1 - 0.8 * t, alpha: 1 - t });
+      else tiles.push({ cell, x: c, y: r });
+    }
+    renderFrame(tiles);
+  }).then(() => animateTimed(dFall, (t) => {
+    const e = easeOut(t);
+    const tiles = [];
+    for (let c = 0; c < cols; c++) {
+      const gone = clearedRowsByCol[c];
+      const k = gone.length;
+      for (let r = 0; r < rows; r++) {
+        const i = idx(current, r, c);
+        const cell = current.cells[i];
+        if (!cell || clearedSet.has(i)) continue;
+        const below = gone.filter((gr) => gr > r).length;
+        tiles.push({ cell, x: c, y: r + below * e });
+      }
+      for (let j = 0; j < k; j++) {
+        const cell = snapshot.cells[idx(snapshot, j, c)];
+        if (!cell) continue;
+        const from = j - k;
+        tiles.push({ cell, x: c, y: from + (j - from) * e });
+      }
+    }
+    renderFrame(tiles);
+  })).then(() => snapshot);
+}
+
+/** 兜底：事件不带 steps 时，按前后差异做简单回放 */
+function animateCascadeFallback(ev, speed) {
   const before = ev.before;
-  const after = ev.after;
+  const after = ev.after || boardRef;
   const changed = [];
   const cleared = [];
   for (let i = 0; i < after.cells.length; i++) {
@@ -382,46 +512,21 @@ function animateCascade(ev, speed) {
     if (b && (!a || b.color !== a.color || b.special !== a.special)) cleared.push(i);
   }
   boardRef = after;
-  return new Promise((resolve) => {
-    // 阶段 1：消除闪烁
-    const d1 = Math.max(1, ANIM.clear / speed);
-    const start1 = now();
-    const step1 = () => {
-      const t = Math.min(1, (now() - start1) / d1);
-      drawBoard(after, { flash: cleared, flashStrength: 1 - t });
-      if (t < 1) { requestAnimationFrame(step1); return; }
-      // 阶段 2：新方块下落
-      const d2 = Math.max(1, ANIM.fall / speed);
-      const start2 = now();
-      const step2 = () => {
-        const t2 = Math.min(1, (now() - start2) / d2);
-        drawBoard(after, {
-          offsetFor: (i) => (changed.includes(i) ? { dx: 0, dy: -cellSize * 1.6 * (1 - easeOut(t2)) } : null),
-        });
-        if (t2 < 1) { requestAnimationFrame(step2); return; }
-        drawBoard(after, {});
-        resolve();
-      };
-      requestAnimationFrame(step2);
-    };
-    requestAnimationFrame(step1);
-  });
+  log.debug('anim.cascade', { cleared: cleared.length, changed: changed.length, beforeIsNull: !before });
+  const d1 = Math.max(1, ANIM.clear / speed);
+  const d2 = Math.max(1, ANIM.fall / speed);
+  return animateTimed(d1, (t) => drawBoard(after, { flash: cleared, flashStrength: 1 - t }))
+    .then(() => animateTimed(d2, (t) => drawBoard(after, {
+      offsetFor: (i) => (changed.includes(i) ? { dx: 0, dy: -cellSize * 1.6 * (1 - easeOut(t)) } : null),
+    })))
+    .then(() => drawBoard(after, {}));
 }
 
 function animateShuffle(speed) {
   const board = boardRef;
-  return new Promise((resolve) => {
-    const dur = Math.max(1, ANIM.fall / speed);
-    const start = now();
-    const step = () => {
-      const t = Math.min(1, (now() - start) / dur);
-      drawBoard(board, { globalAlpha: 0.35 + 0.65 * t, scale: 0.96 + 0.04 * t });
-      if (t < 1) { requestAnimationFrame(step); return; }
-      drawBoard(board, {});
-      resolve();
-    };
-    requestAnimationFrame(step);
-  });
+  const dur = Math.max(140, ANIM.fall / speed);
+  return animateTimed(dur, (t) => drawBoard(board, { globalAlpha: 0.25 + 0.75 * t, scale: 0.94 + 0.06 * t }))
+    .then(() => drawBoard(board, {}));
 }
 
 function requestFrame() {

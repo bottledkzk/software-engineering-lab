@@ -11,6 +11,7 @@ import { finalScore, starsFor } from './score.js';
 import { browserStorage, defaultSave } from './storage.js';
 import * as ui from './ui.js';
 import * as audio from './audio.js';
+import * as log from './log.js';
 
 const TOP_N = 10;
 
@@ -216,6 +217,7 @@ function persist(statusHint) {
   if (!state.storage) return { ok: false };
   const res = state.storage.save(state.save);
   if (!res.ok) {
+    log.error('save.failed', { error: res.error, coins: state.save.coins });
     toast('进度无法保存（浏览器存储已满或被禁用），本局结果可能丢失', true);
   } else if (res.memoryOnly) {
     toast('进度仅本次有效（浏览器存储不可用）', true);
@@ -236,6 +238,11 @@ export function navigate(page) {
   state.page = page;
   if (page === 'rank') state.rank = { ...state.rank };
   if (page === 'settings') state.settings = { ...state.save.settings, nickname: state.save.nickname };
+  // 进入选关页时默认定位到当前进度所在章节（FR-12）
+  if (page === 'levels') {
+    const cur = levelById(state.save.unlockedLevelId);
+    state.levels = { ...state.levels, chapter: (cur && cur.chapter) || 1 };
+  }
   renderAll();
   return { ok: true };
 }
@@ -273,6 +280,10 @@ export function startLevel(levelId) {
   state.result = null;
   state.play.targetLabel = objectiveState(level, state.play.clearedByColor, 0).label;
   ui.clearSelection();
+  log.info('level.start', {
+    id: level.id, rows: level.boardRows, cols: level.boardCols, colors: level.colors,
+    moves: level.moves, type: level.objectiveType, target: level.objectiveTarget, color: level.targetColor,
+  });
   navigate('play');
   maybeStartGuide(levelId);
   return { ok: true };
@@ -285,9 +296,12 @@ export async function onSwap(a, b) {
   if (p.itemMode === 'hammer') return { ok: false, error: 'ItemMode' };
 
   const before = cloneBoard(p.board);
+  const endResolve = log.time('perf.resolveSwap', { level: p.level.id, from: a, to: b });
   const result = resolveSwap(p.board, a, b);
+  endResolve({ valid: result.valid, score: result.score, cleared: result.clearedTotal, combos: result.combos.length });
 
   if (!result.valid) {
+    log.info('swap.invalid', { a, b, movesLeft: p.movesLeft });
     audio.play('bounce');
     await ui.playSequence([{ type: 'bounce', a, b }]);
     return { ok: true, valid: false };
@@ -305,6 +319,13 @@ export async function onSwap(a, b) {
   const mid = cloneBoard(before);
   const t = mid.cells[a]; mid.cells[a] = mid.cells[b]; mid.cells[b] = t;
 
+  log.info('swap.ok', {
+    a, b, score: result.score, combos: result.combos.length, cleared: result.clearedTotal,
+    clearedByColor: result.clearedByColor, specials: result.specialsCreated.length,
+    crossBlast: result.crossBlast, shuffled: result.shuffled,
+    movesLeft: p.movesLeft, inLevelScore: p.inLevelScore,
+  });
+
   audio.play('swap');
   if (result.combos.length >= 2) audio.play('combo', { combo: result.combos.length });
   if (result.specialsCreated && result.specialsCreated.length) audio.play('special');
@@ -314,7 +335,7 @@ export async function onSwap(a, b) {
   await ui.playSequence([
     { type: 'swap', a, b },
     { type: 'combo', combo: result.combos.length },
-    { type: 'cascade', before: mid, after: p.board },
+    { type: 'cascade', before: mid, after: p.board, steps: result.steps },
   ]);
 
   if (result.shuffled) {
@@ -331,6 +352,7 @@ function afterMove() {
   const p = state.play;
   const obj = objectiveState(p.level, p.clearedByColor, p.inLevelScore);
   p.targetLabel = obj.label;
+  log.debug('objective', { label: obj.label, met: obj.met, movesLeft: p.movesLeft, score: p.inLevelScore });
   renderAll();
   if (obj.met) return onSettle(true);
   if (p.movesLeft <= 0) return onSettle(false);
@@ -341,6 +363,7 @@ function afterMove() {
 export function onSettle(won) {
   const p = state.play;
   if (!p) return { ok: false };
+  log.info('settle.begin', { won, level: p.level.id, score: p.inLevelScore, movesLeft: p.movesLeft });
   const settled = settleLevel(state.save, p.level, {
     won, inLevelScore: p.inLevelScore, movesLeft: p.movesLeft,
   }, Date.now());
@@ -350,6 +373,10 @@ export function onSettle(won) {
     isNewBest: settled.isNewBest, firstThreeStar: settled.firstThreeStar,
     canNext: settled.canNext, level: p.level,
   };
+  log.info('settle.done', {
+    won, total: settled.total, stars: settled.stars, coins: settled.coinsGained,
+    newBest: settled.isNewBest, unlocked: settled.save.unlockedLevelId,
+  });
   persist();
   syncAudio();
   audio.play(won ? 'win' : 'lose');
@@ -436,6 +463,7 @@ export function onItemModeChange(mode) {
 export async function onHammerPick(index) {
   const p = state.play;
   if (!p || state.itemMode !== 'hammer') return { ok: false };
+  const before = cloneBoard(p.board);
   const res = applyHammer(p.board, index, Math.random);
   if (!res.ok) { toast('该位置没有方块'); return { ok: false }; }
 
@@ -444,7 +472,8 @@ export async function onHammerPick(index) {
   p.clearedByColor[res.color] = (p.clearedByColor[res.color] || 0) + 1;
   onItemModeChange('cancel');
   audio.play('special');
-  await ui.playSequence([{ type: 'cascade', before: null, after: p.board }]);
+  log.info('item.hammer', { index, color: res.color, shuffled: res.shuffled });
+  await ui.playSequence([{ type: 'cascade', before, after: p.board, steps: [{ cleared: res.cleared, snapshot: res.snapshot }] }]);
   persist();
   return afterMove();
 }
@@ -513,6 +542,8 @@ async function onReset() {
 /* ==================== 启动（API-42 boot） ==================== */
 export function boot(doc = typeof document !== 'undefined' ? document : null) {
   if (!doc) return { ok: false, error: 'NoDocument' };
+  const endBoot = log.time('perf.boot');
+
   state.storage = browserStorage();
   const { data, status } = state.storage.load();
   state.save = data;
@@ -555,6 +586,12 @@ export function boot(doc = typeof document !== 'undefined' ? document : null) {
 
   audio.setVolumes(data.settings);
   renderAll();
+
+  log.info('boot.done', {
+    status: bootStatus, unlock: state.save.unlockedLevelId, coins: state.save.coins,
+    stars: totalStars(state.save), audio: state.audioAvailable,
+  });
+  endBoot({ status: bootStatus });
 
   // 首次用户交互后初始化音频（浏览器自动播放策略 + NFR-01f）
   const unlock = () => {
@@ -606,8 +643,8 @@ function registerServiceWorker() {
   }
 }
 
-// 浏览器环境自动启动（Node 中导入本模块不会触发）
-if (typeof document !== 'undefined') {
+// 浏览器环境自动启动（Node 中导入本模块不会触发；测试版入口会设置 __SKIP_AUTO_BOOT）
+if (typeof document !== 'undefined' && !globalThis.__SKIP_AUTO_BOOT) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => boot());
   else boot();
 }

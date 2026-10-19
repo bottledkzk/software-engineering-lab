@@ -6,12 +6,12 @@
 
 import { WIN_COINS, FIRST_THREE_STAR_COINS, ITEM_PRICES, ITEM_CAP, NICKNAME_MAX } from './config.js';
 import { LEVELS, levelById, validateLevel } from './levels.js';
-import { createBoard, resolveSwap, applyHammer, applyShuffleItem, cloneBoard, findLegalMoves, matchAt, isDeadlock } from './board.js';
+import { createBoard, resolveSwap, applyHammer, applyShuffleItem, cloneBoard } from './board.js';
 import { finalScore, starsFor } from './score.js';
 import { browserStorage, defaultSave } from './storage.js';
 import * as ui from './ui.js';
 import * as audio from './audio.js';
-import * as log from './logger.js';
+import * as log from './log.js';
 
 const TOP_N = 10;
 
@@ -542,10 +542,6 @@ async function onReset() {
 /* ==================== 启动（API-42 boot） ==================== */
 export function boot(doc = typeof document !== 'undefined' ? document : null) {
   if (!doc) return { ok: false, error: 'NoDocument' };
-  const isDebug = typeof location !== 'undefined' && /[?&]debug=1\b/.test(location.search);
-  log.init({ minLevel: isDebug ? 'debug' : 'info' });
-  log.install();
-  log.attachPanel(doc);
   const endBoot = log.time('perf.boot');
 
   state.storage = browserStorage();
@@ -591,18 +587,6 @@ export function boot(doc = typeof document !== 'undefined' ? document : null) {
   audio.setVolumes(data.settings);
   renderAll();
 
-  // 调试/自动化钩子：仅暴露只读状态与公开 API，便于排障与端到端测试
-  if (typeof window !== 'undefined') {
-    window.__game = {
-      state,
-      api: {
-        boot, startLevel, onSwap, useItem, onItemModeChange, onHammerPick, navigate, onSettle,
-        setSettings, onReset, applyReset, demoSave, objectiveState, settleLevel, nextLevelId, totalStars,
-        findLegalMoves, matchAt, isDeadlock, resolveSwap, cloneBoard,
-      },
-      log: { get: log.getLogs, clear: log.clear, exportText: log.exportText, panel: log.togglePanel },
-    };
-  }
   log.info('boot.done', {
     status: bootStatus, unlock: state.save.unlockedLevelId, coins: state.save.coins,
     stars: totalStars(state.save), audio: state.audioAvailable,
@@ -659,8 +643,8 @@ function registerServiceWorker() {
   }
 }
 
-// 浏览器环境自动启动（Node 中导入本模块不会触发）
-if (typeof document !== 'undefined') {
+// 浏览器环境自动启动（Node 中导入本模块不会触发；测试版入口会设置 __SKIP_AUTO_BOOT）
+if (typeof document !== 'undefined' && !globalThis.__SKIP_AUTO_BOOT) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => boot());
   else boot();
 }
