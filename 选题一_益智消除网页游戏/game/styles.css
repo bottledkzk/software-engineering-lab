@@ -197,19 +197,23 @@ html, body {
 .hint { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
 
 /* ---------- 提示条 / 引导 / 弹窗 ---------- */
+/* 提示条：置于底部，避免遮挡顶栏/HUD 与章节标签，且不拦截点击 */
 .banner {
   position: fixed;
-  top: 10px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
-  max-width: 92vw;
-  padding: 10px 16px;
-  border-radius: 999px;
-  background: rgba(255, 107, 129, 0.95);
+  max-width: min(92vw, 560px);
+  padding: 9px 16px;
+  border-radius: 12px;
+  background: rgba(255, 107, 129, 0.96);
   color: #fff;
-  font-size: 14px;
+  font-size: 13.5px;
+  line-height: 1.4;
+  text-align: center;
   z-index: 40;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
 }
 .guide { position: fixed; inset: 0; background: rgba(6, 4, 18, 0.78); display: flex; align-items: flex-end; justify-content: center; z-index: 50; }
 .guide-box { width: min(560px, 92vw); margin-bottom: 8vh; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }

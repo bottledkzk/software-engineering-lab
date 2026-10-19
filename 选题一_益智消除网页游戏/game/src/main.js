@@ -6,7 +6,7 @@
 
 import { WIN_COINS, FIRST_THREE_STAR_COINS, ITEM_PRICES, ITEM_CAP, NICKNAME_MAX } from './config.js';
 import { LEVELS, levelById, validateLevel } from './levels.js';
-import { createBoard, resolveSwap, applyHammer, applyShuffleItem, cloneBoard } from './board.js';
+import { createBoard, resolveSwap, applyHammer, applyShuffleItem, cloneBoard, findLegalMoves, matchAt, isDeadlock } from './board.js';
 import { finalScore, starsFor } from './score.js';
 import { browserStorage, defaultSave } from './storage.js';
 import * as ui from './ui.js';
@@ -335,7 +335,7 @@ export async function onSwap(a, b) {
   await ui.playSequence([
     { type: 'swap', a, b },
     { type: 'combo', combo: result.combos.length },
-    { type: 'cascade', before: mid, after: p.board },
+    { type: 'cascade', before: mid, after: p.board, steps: result.steps },
   ]);
 
   if (result.shuffled) {
@@ -463,6 +463,7 @@ export function onItemModeChange(mode) {
 export async function onHammerPick(index) {
   const p = state.play;
   if (!p || state.itemMode !== 'hammer') return { ok: false };
+  const before = cloneBoard(p.board);
   const res = applyHammer(p.board, index, Math.random);
   if (!res.ok) { toast('该位置没有方块'); return { ok: false }; }
 
@@ -471,7 +472,8 @@ export async function onHammerPick(index) {
   p.clearedByColor[res.color] = (p.clearedByColor[res.color] || 0) + 1;
   onItemModeChange('cancel');
   audio.play('special');
-  await ui.playSequence([{ type: 'cascade', before: null, after: p.board }]);
+  log.info('item.hammer', { index, color: res.color, shuffled: res.shuffled });
+  await ui.playSequence([{ type: 'cascade', before, after: p.board, steps: [{ cleared: res.cleared, snapshot: res.snapshot }] }]);
   persist();
   return afterMove();
 }
@@ -596,6 +598,7 @@ export function boot(doc = typeof document !== 'undefined' ? document : null) {
       api: {
         boot, startLevel, onSwap, useItem, onItemModeChange, onHammerPick, navigate, onSettle,
         setSettings, onReset, applyReset, demoSave, objectiveState, settleLevel, nextLevelId, totalStars,
+        findLegalMoves, matchAt, isDeadlock, resolveSwap, cloneBoard,
       },
       log: { get: log.getLogs, clear: log.clear, exportText: log.exportText, panel: log.togglePanel },
     };
