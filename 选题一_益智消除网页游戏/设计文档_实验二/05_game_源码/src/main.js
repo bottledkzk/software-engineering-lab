@@ -8,7 +8,7 @@ import { WIN_COINS, FIRST_THREE_STAR_COINS, ITEM_PRICES, ITEM_CAP, NICKNAME_MAX 
 import { LEVELS, levelById, validateLevel } from './levels.js';
 import { createBoard, resolveSwap, applyHammer, applyShuffleItem, cloneBoard } from './board.js';
 import { finalScore, starsFor } from './score.js';
-import { browserStorage } from './storage.js';
+import { browserStorage, defaultSave } from './storage.js';
 import * as ui from './ui.js';
 import * as audio from './audio.js';
 
@@ -156,6 +156,39 @@ export function objectiveState(level, clearedByColor, inLevelScore) {
     return { met: done >= level.objectiveTarget, label: `${Math.min(done, level.objectiveTarget)} / ${level.objectiveTarget}` };
   }
   return { met: inLevelScore >= level.scoreTarget, label: `${inLevelScore} / ${level.scoreTarget}` };
+}
+
+/* =====================================================================
+ *  演示辅助：预置存档（仅 URL 带 ?demo=1 时启用，不影响正常游玩与评分材料）
+ * ===================================================================== */
+
+/** 演示用存档：解锁到 2-6（含消除型关卡）、有金币与道具、带若干历史成绩与两条外部榜条目 */
+export function demoSave(now = 0) {
+  const base = defaultSave();
+  const stars = { '1-1': 3, '1-2': 3, '1-3': 2, '1-4': 2, '1-5': 1, '2-1': 2, '2-2': 1, '2-3': 2, '2-4': 1, '2-5': 2 };
+  const bestScores = {
+    '1-1': 16400, '1-2': 15200, '1-3': 13800, '1-4': 13100, '1-5': 11800,
+    '2-1': 9200, '2-2': 7400, '2-3': 6900, '2-4': 6100, '2-5': 6800,
+  };
+  const seeded = {
+    ...base,
+    nickname: '演示员',
+    unlockedLevelId: '2-6',
+    coins: 860,
+    items: { shuffle: 3, hammer: 2, steps: 2 },
+    stars,
+    bestScores,
+    guided: true,
+    tipsSeen: { stripeH: true, stripeV: true, bomb: true, rainbow: false },
+    leaderboard: {
+      total: [
+        { nickname: '室友A', stars: 24, score: 128000, ts: now - 86400000 },
+        { nickname: '室友B', stars: 17, score: 96000, ts: now - 172800000 },
+      ],
+      levels: { '1-1': [{ nickname: '室友A', score: 17800, ts: now - 86400000 }] },
+    },
+  };
+  return upsertTotalBoard(seeded, now);
 }
 
 /* =====================================================================
@@ -479,6 +512,17 @@ export function boot(doc = typeof document !== 'undefined' ? document : null) {
   const { data, status } = state.storage.load();
   state.save = data;
   state.settings = { ...data.settings, nickname: data.nickname };
+
+  // 演示模式（?demo=1）：载入预置进度，便于现场演示不等进度
+  let bootStatus = status;
+  const isDemo = typeof location !== 'undefined' && /[?&]demo=1\b/.test(location.search);
+  if (isDemo) {
+    state.save = demoSave(Date.now());
+    state.settings = { ...state.save.settings, nickname: state.save.nickname };
+    state.storage.save(state.save);
+    bootStatus = 'demo';
+  }
+
   state.levels = { list: LEVELS, chapter: 1, broken: LEVELS.filter((l) => validateLevel(l).length).map((l) => l.id) };
 
   ui.mount(doc.getElementById('app'), {
@@ -519,10 +563,11 @@ export function boot(doc = typeof document !== 'undefined' ? document : null) {
   doc.addEventListener('pointerdown', unlock);
   doc.addEventListener('keydown', unlock);
 
-  // 存档状态提示（FLOW-07 的四种 status）
-  if (status === 'corrupt') toast('存档损坏，已重置（旧档已备份）');
-  else if (status === 'unavailable') toast('进度仅本次有效（浏览器存储不可用）', true);
-  else if (status === 'migrated') toast('存档已升级到新版本');
+  // 存档状态提示（FLOW-07 的四种 status + 演示模式）
+  if (bootStatus === 'demo') toast('演示模式：已载入预置进度（正常游玩请去掉URL中的 ?demo=1）');
+  else if (bootStatus === 'corrupt') toast('存档损坏，已重置（旧档已备份）');
+  else if (bootStatus === 'unavailable') toast('进度仅本次有效（浏览器存储不可用）', true);
+  else if (bootStatus === 'migrated') toast('存档已升级到新版本');
 
   // Service Worker 注册：异步、不阻塞（FLOW-01 / FLOW-09 时序约定）
   registerServiceWorker();
@@ -531,7 +576,7 @@ export function boot(doc = typeof document !== 'undefined' ? document : null) {
   if (typeof window !== 'undefined') window.addEventListener('beforeunload', () => persist());
 
   navigate('home');
-  return { ok: true, status };
+  return { ok: true, status: bootStatus };
 }
 
 function registerServiceWorker() {
