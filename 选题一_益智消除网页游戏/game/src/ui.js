@@ -20,6 +20,7 @@ let canvasCtx = null;
 let cellSize = 0;
 let boardRef = null;
 let inputLocked = false;
+let keyboardMode = false;          // 仅在键盘操作后为 true：鼠标/触屏点选不显示键盘光标
 let selection = null;
 let cursor = 0;
 let pointerStart = null;
@@ -567,6 +568,7 @@ function cellFromEvent(e) {
 }
 
 function onPointerDown(e) {
+  keyboardMode = false;            // 指针操作接管后隐藏键盘光标
   if (!boardRef) return;
   const i = cellFromEvent(e);
   if (i === null) return;
@@ -601,6 +603,7 @@ function onPointerUp(e) {
 
 function onKeyDown(e) {
   if (!boardRef) return;
+  if (/^Arrow(Left|Right|Up|Down)$/.test(e.key) || e.key === ' ' || e.key === 'Enter') keyboardMode = true;   // 键盘操作后显示光标
   if (e.key === 'Escape') { selection = null; cursor = 0; drawBoard(boardRef, {}); return; }
   const map = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
   if (map[e.key]) {
@@ -742,14 +745,18 @@ function drawBoard(board, opts = {}) {
   if (sel !== null && sel !== undefined && board.cells[sel]) {
     const r = rowOf(board, sel);
     const c = colOf(board, sel);
+    ctx.beginPath();                       // 必须新起路径，否则会连带描边上一个方块的残留子路径
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 3;
+    ctx.setLineDash([]);
     roundRect(ctx, c * cellSize + 2, r * cellSize + 2, cellSize - 4, cellSize - 4, cellSize * 0.22);
     ctx.stroke();
   }
-  if (cur !== null && cur !== undefined && board.cells[cur]) {
+  // 键盘光标只在"键盘操作模式"下显示（鼠标/触屏点选时不应出现虚线框）
+  if (keyboardMode && cur !== null && cur !== undefined && board.cells[cur]) {
     const r = rowOf(board, cur);
     const c = colOf(board, cur);
+    ctx.beginPath();
     ctx.strokeStyle = '#7c6cff';
     ctx.lineWidth = 2;
     ctx.setLineDash([5, 4]);
@@ -892,4 +899,8 @@ function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-export const __internals = { drawBoard, layoutAndDraw, CELL_COLORS, GUIDE_TEXT };
+export const __internals = {
+  drawBoard, layoutAndDraw, CELL_COLORS, GUIDE_TEXT,
+  /** 仅测试版使用：暴露渲染/输入状态，便于端到端断言 */
+  getDebugFlags: () => ({ keyboardMode, cellSize, selection, cursor, inputLocked }),
+};

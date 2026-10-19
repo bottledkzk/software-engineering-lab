@@ -3,6 +3,7 @@
 import * as logger from './logger.js';
 import * as log from './log.js';
 import * as board from './board.js';
+import * as ui from './ui.js';
 
 /**
  * 安装调试设施并暴露只读状态/公开 API。
@@ -43,5 +44,6 @@ function exposeGame(main, loggerImpl) {
       get: loggerImpl.getLogs, clear: loggerImpl.clear, exportText: loggerImpl.exportText,
       panel: loggerImpl.togglePanel,
     },
+    ui: ui.__internals,
   };
 }

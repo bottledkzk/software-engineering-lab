@@ -275,6 +275,64 @@ try {
     check('HUD 得分与状态一致', Number(String(after.hudScore).replace(/[^\d]/g, '')) === after.score, `HUD=${after.hudScore} state=${after.score}`);
   }
 
+  /* ---------- 3.5 选中框与键盘光标（回归：鼠标点选不应出现虚线/角落描边） ---------- */
+  log('\n=== 3.5) 选中框与键盘光标 ===');
+  {
+    const geom = await evaluate(`(() => {
+      const cv = document.getElementById('play-board');
+      const r = cv.getBoundingClientRect();
+      const f = window.__game.ui.getDebugFlags();
+      return { left: r.left, top: r.top, cell: f.cellSize, dpr: window.devicePixelRatio || 1, cols: window.__game.state.play.board.cols, rows: window.__game.state.play.board.rows };
+    })()`);
+    const clickCell = async (row, col) => evaluate(`(() => {
+      const cv = document.getElementById('play-board');
+      const r = cv.getBoundingClientRect();
+      const f = window.__game.ui.getDebugFlags();
+      const x = r.left + f.cellSize * (${col} + 0.5);
+      const y = r.top + f.cellSize * (${row} + 0.5);
+      const opt = { clientX: x, clientY: y, bubbles: true, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+      cv.dispatchEvent(new PointerEvent('pointerdown', opt));
+      cv.dispatchEvent(new PointerEvent('pointerup', opt));
+      return true;
+    })()`);
+    // 统计某个格子里"接近纯白"的像素数（选中框是白色 3px 描边）
+    const whiteCount = (row, col) => evaluate(`(() => {
+      const cv = document.getElementById('play-board');
+      const ctx = cv.getContext('2d');
+      const f = window.__game.ui.getDebugFlags();
+      const dpr = window.devicePixelRatio || 1;
+      const cs = f.cellSize * dpr;
+      const x = Math.round(${col} * cs), y = Math.round(${row} * cs), s = Math.round(cs);
+      const d = ctx.getImageData(x, y, s, s).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] > 235 && d[i + 1] > 235 && d[i + 2] > 235 && d[i + 3] > 200) n++;
+      }
+      return n;
+    })()`);
+
+    const before = { tl: await whiteCount(0, 0), br: await whiteCount(geom.rows - 1, geom.cols - 1) };
+    await clickCell(Math.floor(geom.rows / 2), Math.floor(geom.cols / 2));
+    await sleep(150);
+    const flags = await evaluate(`window.__game.ui.getDebugFlags()`);
+    const after = { tl: await whiteCount(0, 0), br: await whiteCount(geom.rows - 1, geom.cols - 1), mid: await whiteCount(Math.floor(geom.rows / 2), Math.floor(geom.cols / 2)) };
+    check('鼠标点选后有选中项', flags.selection !== null && flags.selection !== undefined, String(flags.selection));
+    check('鼠标点选不进入键盘光标模式', flags.keyboardMode === false);
+    check('左上角无白色描边残留（原 bug）', Math.abs(after.tl - before.tl) <= 2, `before=${before.tl} after=${after.tl}`);
+    check('右下角无白色描边残留（原 bug）', Math.abs(after.br - before.br) <= 2, `before=${before.br} after=${after.br}`);
+    check('被选中格出现高亮描边', after.mid > 20, `mid=${after.mid}`);
+    await shot('13_selection');
+
+    // 键盘操作后应显示虚线光标，再次点击则隐藏
+    await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))`);
+    await sleep(120);
+    check('按方向键后进入键盘光标模式', (await evaluate(`window.__game.ui.getDebugFlags()`)).keyboardMode === true);
+    await shot('14_keyboard_cursor');
+    await clickCell(0, 1);
+    await sleep(120);
+    check('再次点选后退出键盘光标模式', (await evaluate(`window.__game.ui.getDebugFlags()`)).keyboardMode === false);
+  }
+
   /* ---------- 4. 交互流程：无效交换 / 道具 / 结算 / 排行 / 设置 / 引导 ---------- */
   log('\n=== 4) 交互流程 ===');
   const hudState = () => evaluate(`(() => {
