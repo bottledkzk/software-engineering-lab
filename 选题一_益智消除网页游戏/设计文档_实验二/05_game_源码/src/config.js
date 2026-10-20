@@ -6,9 +6,6 @@ export const SCORE_PER_BLOCK = 20;          // 每个被消除方块基础分
 export const COMBO_STEP = 0.5;              // 每级连锁倍率增量
 export const COMBO_MAX_MULTIPLIER = 2.5;    // 连锁倍率封顶
 // 剩余步数奖励：与关卡目标分挂钩（BONUS_RATIO × scoreTarget / moves）
-// 依据：《01》要求的星级比率 1.0/1.3/1.6 在"达成即结算"规则下的数值可达性推导
-// （详见《02_AI协作记录》M-14 与 game/README.md）。系数 0.8 使
-//   2 星 ≈ 剩余 37.5% 步数、3 星 ≈ 剩余 75% 步数，1 星为"恰好达成"。
 export const BONUS_RATIO = 0.8;
 export const REMAINING_MOVE_BONUS = 200;    // 遗留常量：仅用于新关卡缺省回退
 
@@ -20,19 +17,62 @@ export function bonusPerStepFor(scoreTarget, moves) {
 // FR-07 星级阈值（结算总分 / scoreTarget）
 export const STAR_THRESHOLDS = [1.0, 1.3, 1.6];
 
-// FR-07 / FR-09 经济
-export const WIN_COINS = 30;                // 过关奖励金币
-export const FIRST_THREE_STAR_COINS = 20;   // 首次 3 星额外奖励
-export const ITEM_PRICES = { shuffle: 100, hammer: 150, steps: 200 };
-export const ITEM_INITIAL = { shuffle: 1, hammer: 1, steps: 1 };
-export const ITEM_CAP = 99;
+// ===== FR-09 经济：通关金币按星级发放，该关首次通关双倍 =====
+export const COIN_BY_STARS = { 1: 10, 2: 20, 3: 40 };
+export const FIRST_CLEAR_MULTIPLIER = 2;
+
+/** 通关金币：1/2/3 星 → 10/20/40；该关首次通关 → 20/40/80 */
+export function coinsForClear(stars, firstClear) {
+  const s = Math.max(0, Math.min(3, Math.floor(Number(stars) || 0)));
+  if (s <= 0) return 0;
+  const base = COIN_BY_STARS[s] || 0;
+  return firstClear ? base * FIRST_CLEAR_MULTIPLIER : base;
+}
+
+// ===== FR-09 道具：6 个，随对应关卡「通关」解锁；使用消耗金币；每局最多携带 3 个 =====
+// kind：hint = 仅提示；shuffle = 立即重排；cell = 需选格后生效；instant = 立即生效
+export const ITEMS = [
+  { id: 'hint', name: '提示', price: 20, unlock: '1-1', kind: 'hint', desc: '高亮一个可用的交换，持续 3 秒' },
+  { id: 'shuffle', name: '洗牌', price: 40, unlock: '1-5', kind: 'shuffle', desc: '重新排列棋盘（不消耗步数）' },
+  { id: 'hammer', name: '锤子', price: 60, unlock: '1-10', kind: 'cell', desc: '消除任意一个方块（计入消除目标、不计分）' },
+  { id: 'bomb', name: '炸弹', price: 100, unlock: '2-1', kind: 'cell', desc: '消除所选方块周围 3×3 范围（不计分）' },
+  { id: 'color', name: '同色', price: 140, unlock: '2-5', kind: 'cell', desc: '消除棋盘上该颜色的全部方块（不计分）' },
+  { id: 'steps', name: '加五步', price: 120, unlock: '2-10', kind: 'instant', desc: '剩余步数 +5' },
+];
+export const LOADOUT_MAX = 3;
+
+export function itemById(id) {
+  return ITEMS.find((it) => it.id === id) || null;
+}
+
+/** 道具是否已解锁：其对应关卡已通关（星级 ≥ 1） */
+export function isItemUnlocked(item, stars) {
+  if (!item) return false;
+  return !!stars && Math.floor(Number(stars[item.unlock]) || 0) >= 1;
+}
+
+export function unlockedItems(stars) {
+  return ITEMS.filter((it) => isItemUnlocked(it, stars));
+}
+
+/** 规范化携带列表：过滤未知/未解锁/重复，保留顺序并截断到上限 */
+export function sanitizeLoadout(ids, stars) {
+  const out = [];
+  for (const id of Array.isArray(ids) ? ids : []) {
+    const it = itemById(id);
+    if (!it || !isItemUnlocked(it, stars) || out.includes(it.id)) continue;
+    out.push(it.id);
+    if (out.length >= LOADOUT_MAX) break;
+  }
+  return out;
+}
 
 // FR-01 初始化约束
 export const INITIALIZE_MAX_TRIES = 50;
 
 // FR-11 存档
 export const SAVE_KEY = 'stardust_save';
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;              // v2：items 计数 → loadout 携带列表
 export const NICKNAME_MAX = 8;
 
 // 动画时长约束（FR-16，供 UI 层使用）

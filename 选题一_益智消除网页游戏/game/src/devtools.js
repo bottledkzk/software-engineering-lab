@@ -36,9 +36,13 @@ function exposeGame(main, loggerImpl) {
       onReset: main.onReset, applyReset: main.applyReset, demoSave: main.demoSave,
       objectiveState: main.objectiveState, settleLevel: main.settleLevel,
       nextLevelId: main.nextLevelId, totalStars: main.totalStars,
+      setLoadout: main.setLoadout, toggleLoadoutItem: main.toggleLoadoutItem,
+      equippedItems: main.equippedItems, onItemPick: main.onItemPick,
       // 棋盘工具直接取自领域层，避免把测试用导出混进正式版的应用层模块
       findLegalMoves: board.findLegalMoves, matchAt: board.matchAt, isDeadlock: board.isDeadlock,
       resolveSwap: board.resolveSwap, cloneBoard: board.cloneBoard,
+      applyBombItem: board.applyBombItem, applyColorClear: board.applyColorClear,
+      clearCellsAndSettle: board.clearCellsAndSettle,
     },
     log: {
       get: loggerImpl.getLogs, clear: loggerImpl.clear, exportText: loggerImpl.exportText,

@@ -137,6 +137,7 @@ export function attachPanel(doc = typeof document !== 'undefined' ? document : n
 
   const bar = doc.createElement('div');
   bar.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px;font:12px system-ui';
+  if (doc.body) doc.body.classList.add('has-debug-panel');
   const title = doc.createElement('strong');
   title.textContent = '运行日志';
   const btnCopy = doc.createElement('button');

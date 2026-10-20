@@ -34,9 +34,11 @@ for (const m of [...uiSrc.matchAll(/getElementById\('([^']+)'\)/g), ...mainSrc.m
 
 const missingIds = [...refs].filter((id) => !htmlIds.has(id));
 check('引用的元素 id 全部存在于 index.html', missingIds.length === 0, missingIds.length ? '缺失: ' + missingIds.join(', ') : `共核对 ${refs.size} 个 id`);
-check('页面包含 6 个页面容器', ['page-home', 'page-levels', 'page-play', 'page-result', 'page-rank', 'page-settings'].every((id) => htmlIds.has(id)));
+check('页面包含 7 个页面容器（含道具库）', ['page-home', 'page-levels', 'page-play', 'page-result', 'page-rank', 'page-settings', 'page-items'].every((id) => htmlIds.has(id)));
 check('关键交互元素齐备（棋盘/道具/引导/横幅/弹窗）',
-  ['play-board', 'item-shuffle', 'item-hammer', 'item-steps', 'guide', 'guide-next', 'banner', 'modal', 'modal-ok'].every((id) => htmlIds.has(id)));
+  ['play-board', 'play-items', 'play-items-empty', 'items-list', 'items-clear', 'items-done',
+    'guide', 'guide-next', 'banner', 'modal', 'modal-ok'].every((id) => htmlIds.has(id)));
+check('道具入口齐备（主菜单 / 选关页）', ['home-items', 'levels-items', 'items-back'].every((id) => htmlIds.has(id)));
 check('入口以 module script 加载 src/main.js', /<script[^>]+type="module"[^>]+src="src\/main\.js"/.test(html));
 check('正式版不引用测试模块（dev-main / devtools / logger）', !/dev-main|devtools|logger/.test(html));
 

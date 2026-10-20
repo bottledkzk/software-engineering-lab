@@ -1,6 +1,6 @@
 // storage.js —— 存档（FR-11、7.2 存档 schema）
-// 支持：损坏备份 + 重置、版本迁移、写入失败提示、存储不可用降级（内存模式）
-import { SAVE_KEY, SAVE_VERSION, ITEM_INITIAL, ITEM_CAP, NICKNAME_MAX } from './config.js';
+// v2：道具由「持有数量」改为「携带列表 loadout」（每局最多 3 个，使用消耗金币）
+import { SAVE_KEY, SAVE_VERSION, NICKNAME_MAX, sanitizeLoadout } from './config.js';
 
 export function defaultSave() {
   return {
@@ -8,41 +8,35 @@ export function defaultSave() {
     nickname: '玩家' + Math.floor(1000 + Math.random() * 9000),
     unlockedLevelId: '1-1',
     coins: 0,
-    items: { ...ITEM_INITIAL },
+    loadout: [],
     stars: {},
     bestScores: {},
     leaderboard: { total: [], levels: {} },
     settings: { musicOn: true, musicVol: 80, sfxOn: true, sfxVol: 80 },
     guided: false,
+    tipsSeen: { stripeH: false, stripeV: false, bomb: false, rainbow: false },
     updatedAt: Date.now(),
   };
 }
 
-/** 结构校验（7.2）：字段缺失或类型错误视为损坏 */
+/** 结构校验（7.2）：关键字段类型错误视为损坏；loadout 允许缺省 */
 export function isValidSave(data) {
   if (!data || typeof data !== 'object') return false;
   if (typeof data.version !== 'number') return false;
   if (typeof data.unlockedLevelId !== 'string') return false;
   if (typeof data.coins !== 'number' || !Number.isFinite(data.coins)) return false;
-  if (!data.items || typeof data.items !== 'object') return false;
-  for (const k of Object.keys(ITEM_INITIAL)) {
-    if (typeof data.items[k] !== 'number') return false;
-  }
   if (!data.stars || typeof data.stars !== 'object') return false;
   if (!data.settings || typeof data.settings !== 'object') return false;
+  if (data.loadout !== undefined && !Array.isArray(data.loadout)) return false;
   return true;
 }
 
-/** 归一化：钳制范围，补齐缺省字段（防止手改存档导致异常） */
+/** 归一化：钳制范围、补齐缺省字段（防止手改存档导致异常） */
 export function normalizeSave(data) {
   const base = defaultSave();
   const out = { ...base, ...data };
   out.nickname = String(data.nickname || base.nickname).slice(0, NICKNAME_MAX);
-  out.coins = Math.max(0, Math.floor(out.coins));
-  out.items = { ...ITEM_INITIAL, ...(data.items || {}) };
-  for (const k of Object.keys(out.items)) {
-    out.items[k] = Math.min(ITEM_CAP, Math.max(0, Math.floor(out.items[k])));
-  }
+  out.coins = Math.max(0, Math.floor(Number(out.coins) || 0));
   out.stars = { ...(data.stars || {}) };
   out.bestScores = { ...(data.bestScores || {}) };
   out.leaderboard = {
@@ -50,15 +44,22 @@ export function normalizeSave(data) {
     levels: data.leaderboard?.levels && typeof data.leaderboard.levels === 'object' ? data.leaderboard.levels : {},
   };
   out.settings = { ...base.settings, ...(data.settings || {}) };
+  out.guided = !!data.guided;
+  out.tipsSeen = { ...base.tipsSeen, ...(data.tipsSeen || {}) };
+  // 携带列表必须仍然合法（未解锁/未知 id 一律剔除）
+  out.loadout = sanitizeLoadout(data.loadout, out.stars);
+  delete out.items;                       // v1 遗留字段，迁移后不再保留
+  out.version = SAVE_VERSION;
   return out;
 }
 
-/** 版本迁移：当前仅 v1；未来结构变更在此追加分支，无法迁移返回 null */
+/** 版本迁移：v1（items 计数）→ v2（loadout）；无法迁移返回 null */
 export function migrateSave(data) {
   if (!data || typeof data.version !== 'number') return null;
   if (data.version === SAVE_VERSION) return normalizeSave(data);
   if (data.version < SAVE_VERSION) {
     const upgraded = { ...data, version: SAVE_VERSION };
+    if (data.version === 1) upgraded.loadout = [];        // v1 的道具计数不再沿用
     return isValidSave(upgraded) ? normalizeSave(upgraded) : null;
   }
   return null;   // 来自更高版本，无法降级

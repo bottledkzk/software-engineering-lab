@@ -7,7 +7,7 @@ import {
 import { LEVELS, validateLevel } from '../src/levels.js';
 import { comboScore, finalScore, starsFor } from '../src/score.js';
 import { createStorage, defaultSave, isValidSave, migrateSave } from '../src/storage.js';
-import { ITEM_PRICES, SCORE_PER_BLOCK, WIN_COINS, bonusPerStepFor, BONUS_RATIO } from '../src/config.js';
+import { COIN_BY_STARS, ITEMS, SCORE_PER_BLOCK, coinsForClear, bonusPerStepFor, BONUS_RATIO } from '../src/config.js';
 import { playLevel } from './sim-player.mjs';
 
 function mulberry32(seed) {
@@ -191,8 +191,13 @@ section('FR-09  道具行为');
   const r = applyHammer(b, idx(b, 3, 3), rng);
   check('锤子可消除指定格且棋盘补满', r.ok && b.cells.filter(Boolean).length === before);
   check('锤子消除物不计分', r.scored === 0);
-  check('道具价格符合文档（100/150/200）', ITEM_PRICES.shuffle === 100 && ITEM_PRICES.hammer === 150 && ITEM_PRICES.steps === 200);
-  check('过关金币 +30', WIN_COINS === 30);
+  check('道具共 6 个（第一章 3 个 / 第二章 3 个）', ITEMS.length === 6);
+  check('道具价格表：提示20/洗牌40/锤子60/炸弹100/同色140/加五步120',
+    ITEMS.map((it) => it.price).join(',') === '20,40,60,100,140,120', ITEMS.map((it) => it.price).join(','));
+  check('道具解锁关卡：1-1 / 1-5 / 1-10 / 2-1 / 2-5 / 2-10',
+    ITEMS.map((it) => it.unlock).join(',') === '1-1,1-5,1-10,2-1,2-5,2-10');
+  check('通关金币表：1/2/3 星 = 10/20/40', COIN_BY_STARS[1] === 10 && COIN_BY_STARS[2] === 20 && COIN_BY_STARS[3] === 40);
+  check('首次通关双倍：3 星 = 80，重复通关 = 40', coinsForClear(3, true) === 80 && coinsForClear(3, false) === 40);
 }
 
 // ---------- AC-14 ----------

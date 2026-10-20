@@ -485,20 +485,88 @@ export function resolveSwap(board, a, b, rng = defaultRng) {
   return result;
 }
 
+/**
+ * FR-09 道具共用：清除给定格子并「静默结算」
+ * 静默 = 补位后若又形成连线，只做清除与补位，**不计分、不生成特殊方块**（道具不直接买分）；
+ * 最后做死局检查。返回消除格、按色统计与快照（供 UI 回放与目标计数）。
+ */
+export function clearCellsAndSettle(board, cells, rng = defaultRng) {
+  const cleared = [];
+  const byColor = {};
+  for (const i of cells) {
+    const cell = board.cells[i];
+    if (!cell) continue;
+    cleared.push(i);
+    byColor[cell.color] = (byColor[cell.color] || 0) + 1;
+    board.cells[i] = null;
+  }
+  if (!cleared.length) return { ok: false, cleared: [], byColor, snapshot: cloneBoard(board), shuffled: false };
+  gravityAndRefill(board, rng);
+
+  let guard = 0;
+  let silentRounds = 0;
+  while (guard++ < 20) {
+    const groups = findMatches(board);
+    if (!groups.length) break;
+    silentRounds++;
+    for (const g of groups) {
+      for (const c of g.cells) {
+        const cell = board.cells[c];
+        if (!cell) continue;
+        byColor[cell.color] = (byColor[cell.color] || 0) + 1;
+        cleared.push(c);
+        board.cells[c] = null;
+      }
+    }
+    gravityAndRefill(board, rng);
+  }
+
+  const shuffled = isDeadlock(board);
+  if (shuffled) shuffleBoard(board, rng);
+  return { ok: true, cleared, byColor, silentRounds, snapshot: cloneBoard(board), shuffled };
+}
+
 /** FR-09 锤子：消除任意 1 格；计入消除目标但不计分、不触发特殊效果 */
 export function applyHammer(board, i, rng = defaultRng) {
   const cell = board.cells[i];
   if (!cell) return { ok: false };
   const color = cell.color;
-  board.cells[i] = null;
-  gravityAndRefill(board, rng);
-  const shuffled = isDeadlock(board);
-  if (shuffled) shuffleBoard(board, rng);
-  // steps 供 UI 回放（与 resolveSwap 同构；洗牌时以洗牌后的棋盘作为快照）
-  return { ok: true, color, scored: 0, cleared: [i], snapshot: cloneBoard(board), shuffled };
+  const res = clearCellsAndSettle(board, [i], rng);
+  return { ...res, color, scored: 0 };
 }
 
-/** FR-09 洗牌道具：与死局洗牌效果相同（免费洗牌不可主动触发） */
+/** FR-09 炸弹：以所选格为中心的 3×3 范围清除（不计分） */
+export function applyBombItem(board, i, rng = defaultRng) {
+  const cell = board.cells[i];
+  if (!cell) return { ok: false };
+  const r = rowOf(board, i);
+  const c = colOf(board, i);
+  const cells = [];
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const rr = r + dr;
+      const cc = c + dc;
+      if (rr >= 0 && rr < board.rows && cc >= 0 && cc < board.cols) cells.push(idx(board, rr, cc));
+    }
+  }
+  const res = clearCellsAndSettle(board, cells, rng);
+  return { ...res, color: cell.color, scored: 0 };
+}
+
+/** FR-09 同色：清除棋盘上该颜色的全部方块（不计分） */
+export function applyColorClear(board, i, rng = defaultRng) {
+  const cell = board.cells[i];
+  if (!cell) return { ok: false };
+  const color = cell.color;
+  const cells = [];
+  board.cells.forEach((c2, j) => {
+    if (c2 && c2.color === color) cells.push(j);
+  });
+  const res = clearCellsAndSettle(board, cells, rng);
+  return { ...res, color, scored: 0 };
+}
+
+/** FR-09 洗牌道具：与死局洗牌效果相同（不消耗步数） */
 export function applyShuffleItem(board, rng = defaultRng) {
   shuffleBoard(board, rng);
   return { ok: true };

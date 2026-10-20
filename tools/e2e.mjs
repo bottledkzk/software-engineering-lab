@@ -374,7 +374,34 @@ try {
     check('能构造出无效交换对（用于 AC-04 验证）', false);
   }
 
-  // 4.2 锤子：确认 → 选格 → 扣费 → 动画结束
+  // 4.2 道具库：6 个道具 / 解锁态 / 携带上限
+  {
+    await evaluate(`window.__game.api.navigate('items')`);
+    await sleep(250);
+    const rows = await evaluate(`document.querySelectorAll('#items-list .item-row').length`);
+    const locked = await evaluate(`document.querySelectorAll('#items-list .item-row.is-locked').length`);
+    const equipped = await evaluate(`document.querySelectorAll('#items-list .item-row.is-equipped').length`);
+    check('道具库展示 6 个道具', rows === 6, `rows=${rows}`);
+    check('演示存档下只有「加五步」未解锁（1 个锁定）', locked === 1, `locked=${locked}`);
+    check('默认已携带 3 个（=上限）', equipped === 3, `equipped=${equipped}`);
+    await shot('15_items_page');
+    const addMore = await evaluate(`window.__game.api.toggleLoadoutItem('hint')`);
+    check('携带已满时拒绝继续添加', addMore && addMore.ok === false, JSON.stringify(addMore));
+  }
+
+  // 4.3 重新配置携带：只带 提示 / 洗牌 / 锤子，局内道具条应随之变化
+  {
+    await evaluate(`window.__game.api.setLoadout(['hint', 'shuffle', 'hammer'])`);
+    const loadout = await evaluate(`window.__game.state.save.loadout`);
+    check('可重新配置携带列表', loadout.join(',') === 'hint,shuffle,hammer', loadout.join(','));
+    await evaluate(`window.__game.api.startLevel('2-3')`);
+    await waitFor(`window.__game.state.page === 'play'`);
+    const btns = await evaluate(`[...document.querySelectorAll('#play-items .item')].map((b) => b.dataset.item)`);
+    check('局内道具条只显示携带的 3 个', btns.join(',') === 'hint,shuffle,hammer', btns.join(','));
+    await shot('16_items_bar');
+  }
+
+  // 4.4 锤子：确认 → 选格（不扣费）→ 点中才扣 60 → 动画结束
   {
     const s0 = await hudState();
     await click('item-hammer');
@@ -383,16 +410,15 @@ try {
     await click('modal-ok');
     await waitFor(`window.__game.state.itemMode === 'hammer'`, 4000, '进入选格模式');
     check('确认后进入选格模式（未扣费）', (await hudState()).coins === s0.coins);
-    await evaluate(`window.__game.api.onHammerPick(0)`);
+    await evaluate(`window.__game.api.onItemPick(0)`);
     await sleep(900);
     const s1 = await hudState();
-    check('锤子选定后扣 150 金币', s1.coins === s0.coins - 150, `${s0.coins}→${s1.coins}`);
-    check('锤子持有数 −1', s1.items.hammer === s0.items.hammer - 1);
+    check('锤子选定后扣 60 金币', s1.coins === s0.coins - 60, `${s0.coins}→${s1.coins}`);
     check('锤子后退出选格模式', (await evaluate(`window.__game.state.itemMode`)) === null);
-    check('锤子后输入锁已释放（可继续操作）', !/error/.test(JSON.stringify(await evaluate(`window.__game.log.get()`))));
+    check('锤子后无错误日志', !(await evaluate(`window.__game.log.get().some((l) => l.lv === 'error')`)));
   }
 
-  // 4.3 洗牌：确认 → 扣费 → 棋盘变化 → 不扣步
+  // 4.5 洗牌：确认 → 扣 40 → 棋盘变化 → 不扣步
   {
     const s0 = await hudState();
     await click('item-shuffle');
@@ -400,12 +426,23 @@ try {
     await click('modal-ok');
     await sleep(900);
     const s1 = await hudState();
-    check('洗牌扣 100 金币', s1.coins === s0.coins - 100, `${s0.coins}→${s1.coins}`);
+    check('洗牌扣 40 金币', s1.coins === s0.coins - 40, `${s0.coins}→${s1.coins}`);
     check('洗牌不消耗步数', s1.moves === s0.moves);
     check('洗牌后棋盘发生变化', s1.board !== s0.board);
   }
 
-  // 4.4 结算：结果页 → 下一关
+  // 4.6 提示：不扣费前先确认可用（提示无需确认，直接扣 20 并高亮）
+  {
+    const s0 = await hudState();
+    await evaluate(`window.__game.api.useItem('hint')`);
+    await sleep(300);
+    const s1 = await hudState();
+    check('提示扣 20 金币', s1.coins === s0.coins - 20, `${s0.coins}→${s1.coins}`);
+    check('提示不消耗步数、不改棋盘', s1.moves === s0.moves && s1.board === s0.board);
+    await shot('17_items_hint');
+  }
+
+  // 4.7 结算：结果页 → 下一关
   {
     const before = await hudState();
     await evaluate(`window.__game.api.onSettle(true)`);
@@ -432,6 +469,30 @@ try {
     }
   }
 
+  // 4.8 首通双倍金币：2-6 从未通关 → +20；再打一次 → +10（无双倍）
+  {
+    const coins0 = (await hudState()).coins;
+    await evaluate(`window.__game.api.startLevel('2-6')`);
+    await waitFor(`window.__game.state.page === 'play'`);
+    await evaluate(`window.__game.api.onSettle(true)`);
+    await sleep(350);
+    const r1 = await evaluate(`(() => ({
+      coins: window.__game.state.save.coins,
+      sub: document.getElementById('result-sub').textContent,
+      firstClear: window.__game.state.result.firstClear,
+    }))()`);
+    check('首次通关得到双倍金币（1 星 +20）', r1.coins - coins0 === 20, `Δ${r1.coins - coins0}`);
+    check('result.firstClear 为 true', r1.firstClear === true);
+    check('结算文案标注"首次通关双倍"', /首次通关双倍/.test(r1.sub), r1.sub);
+    await shot('18_result_first_clear');
+    await evaluate(`window.__game.api.startLevel('2-6')`);
+    await waitFor(`window.__game.state.page === 'play'`);
+    await evaluate(`window.__game.api.onSettle(true)`);
+    await sleep(350);
+    const r2 = await evaluate(`(() => ({ coins: window.__game.state.save.coins, sub: document.getElementById('result-sub').textContent }))()`);
+    check('同一关重复通关只给基础金币（+10）', r2.coins - r1.coins === 10, `Δ${r2.coins - r1.coins}`);
+    check('重复通关不再标注双倍', !/双倍/.test(r2.sub), r2.sub);
+  }
   // 4.5 排行榜：两榜都有内容且可切换
   {
     await evaluate(`window.__game.api.navigate('rank')`);

@@ -4,11 +4,16 @@
 //   · 存档时机：结算 / 解锁 / 金币与道具变化 / 设置与昵称变化 / visibilitychange（FR-11-1）
 //   · 结算等"编排逻辑"以纯函数导出（同文件 import 即可在 Node 中单测，无需 DOM）
 
-import { WIN_COINS, FIRST_THREE_STAR_COINS, ITEM_PRICES, ITEM_CAP, NICKNAME_MAX } from './config.js';
+import {
+  ITEMS, LOADOUT_MAX, NICKNAME_MAX, itemById, isItemUnlocked, sanitizeLoadout, coinsForClear,
+} from './config.js';
 import { LEVELS, levelById, validateLevel } from './levels.js';
-import { createBoard, resolveSwap, applyHammer, applyShuffleItem, cloneBoard } from './board.js';
+import {
+  createBoard, resolveSwap, applyHammer, applyBombItem, applyColorClear, applyShuffleItem,
+  cloneBoard, findLegalMoves,
+} from './board.js';
 import { finalScore, starsFor } from './score.js';
-import { browserStorage, defaultSave } from './storage.js';
+import { browserStorage, defaultSave, normalizeSave } from './storage.js';
 import * as ui from './ui.js';
 import * as audio from './audio.js';
 import * as log from './log.js';
@@ -77,13 +82,10 @@ export function settleLevel(save, level, outcome, now = 0) {
   const prevStars = (save.stars || {})[level.id] || 0;
   const prevBest = (save.bestScores || {})[level.id] || 0;
   const isNewBest = won && total > prevBest;
-
-  let coinsGained = 0;
-  let firstThreeStar = false;
-  if (won) {
-    if (prevStars < 3 && stars >= 3) { coinsGained += FIRST_THREE_STAR_COINS; firstThreeStar = true; }
-    coinsGained += WIN_COINS;
-  }
+  // 该关是否首次通关：决定金币是否双倍（FR-09）
+  const firstClear = won && prevStars === 0;
+  const coinsGained = won ? coinsForClear(stars, firstClear) : 0;
+  const firstThreeStar = false;   // 兼容旧字段：新的金币规则不再单独发放三星奖励
 
   let next = {
     ...save,
@@ -103,19 +105,19 @@ export function settleLevel(save, level, outcome, now = 0) {
   next = upsertTotalBoard(next, now);
 
   return {
-    save: next, won, total, stars, coinsGained, isNewBest, firstThreeStar,
+    save: next, won, total, stars, coinsGained, firstClear, isNewBest, firstThreeStar,
     unlockedLevelId: next.unlockedLevelId,
     canNext: won && !!nextLevelId(level.id),
   };
 }
 
-/** 重置进度（FR-14-3）：清空进度与两个榜单，保留昵称与音量设置 */
+/** 重置进度（FR-14-3）：清空进度、金币、携带列表与两个榜单，保留昵称与音量设置 */
 export function applyReset(save) {
   return {
     ...save,
     unlockedLevelId: '1-1',
     coins: 0,
-    items: { shuffle: 1, hammer: 1, steps: 1 },
+    loadout: [],
     stars: {},
     bestScores: {},
     leaderboard: { total: [], levels: {} },
@@ -166,9 +168,14 @@ export function objectiveState(level, clearedByColor, inLevelScore) {
 /** 演示用存档：解锁到 2-6（含消除型关卡）、有金币与道具、带若干历史成绩与两条外部榜条目 */
 export function demoSave(now = 0) {
   const base = defaultSave();
-  const stars = { '1-1': 3, '1-2': 3, '1-3': 2, '1-4': 2, '1-5': 1, '2-1': 2, '2-2': 1, '2-3': 2, '2-4': 1, '2-5': 2 };
+  // 星级覆盖第一章全部 + 第二章前 5 关：对应解锁 5 个道具（仅「加五步」保持在 2-10 未解锁）
+  const stars = {
+    '1-1': 3, '1-2': 3, '1-3': 2, '1-4': 2, '1-5': 1, '1-6': 2, '1-7': 1, '1-8': 1, '1-9': 3, '1-10': 2,
+    '2-1': 2, '2-2': 1, '2-3': 2, '2-4': 1, '2-5': 2,
+  };
   const bestScores = {
     '1-1': 16400, '1-2': 15200, '1-3': 13800, '1-4': 13100, '1-5': 11800,
+    '1-6': 12600, '1-7': 11200, '1-8': 10900, '1-9': 17000, '1-10': 12400,
     '2-1': 9200, '2-2': 7400, '2-3': 6900, '2-4': 6100, '2-5': 6800,
   };
   const seeded = {
@@ -176,7 +183,7 @@ export function demoSave(now = 0) {
     nickname: '演示员',
     unlockedLevelId: '2-6',
     coins: 860,
-    items: { shuffle: 3, hammer: 2, steps: 2 },
+    loadout: ['hammer', 'bomb', 'color'],
     stars,
     bestScores,
     guided: true,
@@ -189,7 +196,8 @@ export function demoSave(now = 0) {
       levels: { '1-1': [{ nickname: '室友A', score: 17800, ts: now - 86400000 }] },
     },
   };
-  return upsertTotalBoard(seeded, now);
+  // 与正常读取一样过一遍归一化：携带列表必须都是已解锁道具
+  return upsertTotalBoard(normalizeSave(seeded), now);
 }
 
 /* =====================================================================
@@ -209,6 +217,7 @@ export const state = {
   audioAvailable: false,
   guide: { active: false, step: 0 },
   itemMode: null,
+  itemsReturn: 'home',
 };
 
 function toast(text, sticky = false) { ui.showBanner(text, { sticky }); }
@@ -235,6 +244,8 @@ function syncAudio() {
 
 /** API-25 navigate */
 export function navigate(page) {
+  // 记录从哪进入道具页，便于返回
+  if (page === 'items' && state.page !== 'items') state.itemsReturn = state.page;
   state.page = page;
   if (page === 'rank') state.rank = { ...state.rank };
   if (page === 'settings') state.settings = { ...state.save.settings, nickname: state.save.nickname };
@@ -258,6 +269,8 @@ function renderAll() {
     settings: state.settings,
     offline: state.offline,
     audioAvailable: state.audioAvailable,
+    itemsList: equippedItems(state.save),
+    itemsAll: ITEMS.map((it) => ({ ...it, unlocked: isItemUnlocked(it, state.save.stars) })),
   });
 }
 
@@ -370,7 +383,7 @@ export function onSettle(won) {
   state.save = settled.save;
   state.result = {
     won, stars: settled.stars, total: settled.total, coinsGained: settled.coinsGained,
-    isNewBest: settled.isNewBest, firstThreeStar: settled.firstThreeStar,
+    isNewBest: settled.isNewBest, firstClear: settled.firstClear,
     canNext: settled.canNext, level: p.level,
   };
   log.info('settle.done', {
@@ -385,62 +398,113 @@ export function onSettle(won) {
   return { ok: true, ...settled };
 }
 
-/** API-23 useItem */
-export async function useItem(type, extra) {
-  const p = state.play;
-  const price = ITEM_PRICES[type];
-  if (price === undefined) return { ok: false, error: 'UnknownItem' };
-  if ((state.save.coins || 0) < price) { toast('金币不足'); audio.play('bounce'); return { ok: false, error: 'NoCoins' }; }
+/* ==================== 道具：携带列表 + 金币消耗（FR-09） ==================== */
 
-  if (type === 'hammer') {
-    if (!p || state.page !== 'play') { toast('锤子只能在关卡内使用'); return { ok: false }; }
+/** 已解锁且已携带的道具（供 UI 渲染道具条） */
+export function equippedItems(save = state.save) {
+  const ids = Array.isArray(save.loadout) ? save.loadout : [];
+  return ids.map((id) => itemById(id)).filter((it) => it && isItemUnlocked(it, save.stars));
+}
+
+/** 设置携带道具（最多 3 个；未解锁/重复自动剔除） */
+export function setLoadout(ids) {
+  const next = sanitizeLoadout(ids, state.save.stars);
+  state.save = { ...state.save, loadout: next };
+  persist();
+  renderAll();
+  log.info('loadout.set', { loadout: next });
+  return { ok: true, loadout: next };
+}
+
+/** 切换某个道具的携带状态（上限 LOADOUT_MAX） */
+export function toggleLoadoutItem(id) {
+  const item = itemById(id);
+  if (!item) return { ok: false, error: 'UnknownItem' };
+  if (!isItemUnlocked(item, state.save.stars)) { toast(`通关 ${item.unlock} 后解锁`); return { ok: false, error: 'Locked' }; }
+  const cur = Array.isArray(state.save.loadout) ? state.save.loadout : [];
+  if (cur.includes(id)) return setLoadout(cur.filter((x) => x !== id));
+  if (cur.length >= LOADOUT_MAX) { toast(`最多携带 ${LOADOUT_MAX} 个道具`); audio.play('bounce'); return { ok: false, error: 'Full' }; }
+  return setLoadout([...cur, id]);
+}
+
+/** API-23 useItem：消耗金币使用一个已携带的道具 */
+export async function useItem(type) {
+  const item = itemById(type);
+  if (!item) return { ok: false, error: 'UnknownItem' };
+  if (!isItemUnlocked(item, state.save.stars)) { toast(`通关 ${item.unlock} 后解锁`); return { ok: false, error: 'Locked' }; }
+  if (!(state.save.loadout || []).includes(type)) { toast('未携带该道具（可在道具库更换）'); return { ok: false, error: 'NotEquipped' }; }
+  const p = state.play;
+  if (state.save.coins < item.price) { toast('金币不足'); audio.play('bounce'); return { ok: false, error: 'NoCoins' }; }
+
+  if (item.kind !== 'instant' && (!p || state.page !== 'play')) {
+    toast(`${item.name}只能在关卡内使用`);
+    return { ok: false, error: 'NotPlaying' };
+  }
+  if (item.kind === 'instant' && !(state.page === 'play' || (state.result && !state.result.won))) {
+    toast(`${item.name}只能在关卡内或失败结算时使用`);
+    return { ok: false, error: 'NotPlaying' };
+  }
+
+  // 选格类：进入选格模式，点中格子时才扣费（取消不花钱）
+  if (item.kind === 'cell') {
     const ok = await ui.confirm({
-      title: '使用锤子',
-      text: `消耗 ${price} 金币并消耗 1 个锤子，点击任意方块将其消除（不计分，但计入消除目标）。`,
+      title: `使用${item.name}（${item.price} 金币）`,
+      text: `${item.desc}。进入选格后点击目标方块生效，取消不消耗金币。`,
       okText: '开始选格',
     });
     if (!ok) return { ok: false, error: 'Cancelled' };
-    onItemModeChange('enter');
+    onItemModeChange('enter', type);
     return { ok: true };
   }
 
-  const ok = await ui.confirm({
-    title: type === 'shuffle' ? '使用洗牌' : '购买 +5 步',
-    text: type === 'shuffle'
-      ? `消耗 ${price} 金币打乱棋盘（不消耗步数）。使用后立即消耗，退出本局不返还。`
-      : `消耗 ${price} 金币立即获得 5 步。使用后立即消耗，退出本局不返还。`,
-    okText: '确定使用',
-  });
-  if (!ok) return { ok: false, error: 'Cancelled' };
+  // 提示很便宜，不做二次确认；其余道具确认后立即扣费
+  if (item.kind !== 'hint') {
+    const ok = await ui.confirm({
+      title: `使用${item.name}（${item.price} 金币）`,
+      text: `${item.desc}。使用后立即扣除金币，退出本局不返还。`,
+      okText: '确定使用',
+    });
+    if (!ok) return { ok: false, error: 'Cancelled' };
+  }
 
-  state.save = { ...state.save, coins: state.save.coins - price };
-  state.save.items = { ...state.save.items, [type]: Math.max(0, Math.min(ITEM_CAP, (state.save.items[type] || 0) - 1)) };
+  state.save = { ...state.save, coins: state.save.coins - item.price };
+  log.info('item.use', { type, price: item.price, kind: item.kind });
 
-  if (type === 'steps') {
+  if (item.kind === 'hint') {
+    const moves = p ? findLegalMoves(p.board) : [];
+    if (!moves.length) {
+      toast('当前没有可用交换');
+    } else {
+      const pair = moves[Math.floor(Math.random() * moves.length)];
+      ui.showHint(pair[0], pair[1]);
+      audio.play('button');
+    }
+  } else if (item.kind === 'shuffle' && p) {
+    applyShuffleItem(p.board, Math.random);
+    await ui.playSequence([{ type: 'shuffle' }]);
+    renderAll();
+    await afterMove();
+  } else if (item.kind === 'instant') {
     if (p && state.page === 'play') {
       p.movesLeft += 5;
       renderAll();
       toast('步数 +5');
     } else if (state.result && !state.result.won && p) {
-      // 失败结算界面续玩：保留棋盘与得分，补 5 步（FR-09-5、AC-19）
       p.movesLeft = 5;
       state.result = null;
       navigate('play');
       toast('续玩：+5 步');
     }
-  } else if (type === 'shuffle' && p) {
-    applyShuffleItem(p.board, Math.random);
-    await ui.playSequence([{ type: 'shuffle' }]);
-    renderAll();
-    await afterMove();
+    audio.play('button');
   }
+
   persist();
   syncAudio();
   return { ok: true };
 }
 
-/** API-43 onItemModeChange：锤子选格模式 */
-export function onItemModeChange(mode) {
+/** API-43 onItemModeChange：选格类道具的进入/取消（扣费发生在点中格子时） */
+export function onItemModeChange(mode, type) {
   if (mode === 'cancel') {
     state.itemMode = null;
     if (state.play) state.play.itemMode = null;
@@ -449,30 +513,45 @@ export function onItemModeChange(mode) {
     return { ok: true };
   }
   if (mode === 'enter') {
-    if (!state.play || state.page !== 'play') return { ok: false };
-    state.itemMode = 'hammer';
-    state.play.itemMode = 'hammer';
+    const item = itemById(type);
+    if (!item || item.kind !== 'cell') return { ok: false, error: 'BadItem' };
+    if (!state.play || state.page !== 'play') return { ok: false, error: 'NotPlaying' };
+    state.itemMode = type;
+    state.play.itemMode = type;
     renderAll();
-    toast('锤子模式：点击要消除的方块');
+    toast(`${item.name}：点击目标方块生效（点空白处取消）`);
     return { ok: true };
   }
   return { ok: false };
 }
 
-/** 锤子选定格子：此时才真正扣费与消耗（取消不消耗） */
-export async function onHammerPick(index) {
+/** 选格类道具：点中格子后才扣费并生效 */
+export async function onItemPick(index) {
   const p = state.play;
-  if (!p || state.itemMode !== 'hammer') return { ok: false };
+  const type = state.itemMode;
+  const item = itemById(type);
+  if (!p || !item || item.kind !== 'cell') return { ok: false };
+  if (state.save.coins < item.price) { toast('金币不足'); return { ok: false, error: 'NoCoins' }; }
+
   const before = cloneBoard(p.board);
-  const res = applyHammer(p.board, index, Math.random);
+  let res;
+  if (type === 'hammer') res = applyHammer(p.board, index, Math.random);
+  else if (type === 'bomb') res = applyBombItem(p.board, index, Math.random);
+  else if (type === 'color') res = applyColorClear(p.board, index, Math.random);
+  else return { ok: false, error: 'BadItem' };
   if (!res.ok) { toast('该位置没有方块'); return { ok: false }; }
 
-  state.save = { ...state.save, coins: state.save.coins - ITEM_PRICES.hammer };
-  state.save.items = { ...state.save.items, hammer: Math.max(0, Math.min(ITEM_CAP, (state.save.items.hammer || 0) - 1)) };
-  p.clearedByColor[res.color] = (p.clearedByColor[res.color] || 0) + 1;
+  state.save = { ...state.save, coins: state.save.coins - item.price };
+  Object.entries(res.byColor || {}).forEach(([c, n]) => {
+    const ci = Number(c);
+    p.clearedByColor[ci] = (p.clearedByColor[ci] || 0) + n;
+  });
   onItemModeChange('cancel');
   audio.play('special');
-  log.info('item.hammer', { index, color: res.color, shuffled: res.shuffled });
+  log.info('item.pick', {
+    type, index, price: item.price, cleared: res.cleared.length,
+    silentRounds: res.silentRounds, shuffled: res.shuffled,
+  });
   await ui.playSequence([{ type: 'cascade', before, after: p.board, steps: [{ cleared: res.cleared, snapshot: res.snapshot }] }]);
   persist();
   return afterMove();
@@ -567,9 +646,14 @@ export function boot(doc = typeof document !== 'undefined' ? document : null) {
     onChapter: (c) => { state.levels = { ...state.levels, chapter: c }; renderAll(); },
     onSwap: (a, b) => { onSwap(a, b); },
     onItem: (type) => { useItem(type); },
-    onHammerPick: (i) => { onHammerPick(i); },
+    onItemPick: (i) => { onItemPick(i); },
+    onLoadoutToggle: (id) => { toggleLoadoutItem(id); },
+    onLoadoutClear: () => { setLoadout([]); },
+    onNavigateItems: () => navigate('items'),
     onBlockedInput: () => { /* 动画期间的输入按 UI-03 丢弃 */ },
     onNavigate: (page) => navigate(page),
+    onItemsBack: () => navigate(state.itemsReturn || 'home'),
+    onItemModeCancel: () => onItemModeChange('cancel'),
     onRetry: () => { if (state.play) startLevel(state.play.level.id); },
     onNext: () => { const nx = state.play && nextLevelId(state.play.level.id); if (nx) startLevel(nx); },
     onRankTab: (tab) => { state.rank = { ...state.rank, tab }; renderAll(); },

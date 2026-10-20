@@ -19,6 +19,7 @@
       <div class="menu">
         <button class="btn btn-primary" id="home-continue">开始游戏</button>
         <button class="btn" id="home-rank">排行榜</button>
+        <button class="btn" id="home-items">道具</button>
         <button class="btn" id="home-settings">设置</button>
       </div>
       <p class="hint" id="home-status"></p>
@@ -30,6 +31,7 @@
     <header class="bar">
       <button class="btn btn-icon" id="levels-back" aria-label="返回">←</button>
       <h2 class="bar-title">选择关卡</h2>
+      <button class="btn btn-small" id="levels-items">道具</button>
       <span class="bar-meta" id="levels-total-stars">★ 0</span>
     </header>
     <nav class="tabs" id="levels-tabs" aria-label="章节"></nav>
@@ -61,17 +63,8 @@
       <canvas id="play-board" aria-label="游戏棋盘"></canvas>
       <div class="combo-pop" id="play-combo" aria-live="polite"></div>
     </div>
-    <div class="items" id="play-items">
-      <button class="btn item" id="item-shuffle">
-        <span class="item-name">洗牌</span><span class="item-cost">100</span><span class="item-count" id="count-shuffle">0</span>
-      </button>
-      <button class="btn item" id="item-hammer">
-        <span class="item-name">锤子</span><span class="item-cost">150</span><span class="item-count" id="count-hammer">0</span>
-      </button>
-      <button class="btn item" id="item-steps">
-        <span class="item-name">+5 步</span><span class="item-cost">200</span><span class="item-count" id="count-steps">0</span>
-      </button>
-    </div>
+    <div class="items" id="play-items"></div>
+    <p class="hint hidden" id="play-items-empty">未携带道具 · 可在主界面或选关页的「道具」中配置（每局最多 3 个）</p>
     <p class="hint" id="play-tip">点击或拖动交换相邻方块</p>
   </section>
 
@@ -104,6 +97,21 @@
     </nav>
     <div class="rank-level-pick" id="rank-level-pick"></div>
     <ol class="rank-list" id="rank-list"></ol>
+  </section>
+
+  <!-- ============ 道具库 ITEMS ============ -->
+  <section class="page" id="page-items">
+    <header class="bar">
+      <button class="btn btn-icon" id="items-back" aria-label="返回">←</button>
+      <h2 class="bar-title">道具</h2>
+      <span class="bar-meta" id="items-coins">0 金币</span>
+    </header>
+    <p class="hint" id="items-tip">通关对应关卡解锁；每局最多携带 3 个，使用消耗金币。</p>
+    <div class="item-list" id="items-list"></div>
+    <div class="items-actions">
+      <button class="btn" id="items-clear">清空携带</button>
+      <button class="btn btn-primary" id="items-done">完成</button>
+    </div>
   </section>
 
   <!-- ============ 设置 SETTINGS ============ -->

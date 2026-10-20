@@ -242,3 +242,23 @@ html, body {
   .page.is-active { animation: none; }
   .btn { transition: none; }
 }
+
+/* ---------- 道具库（FR-09） ---------- */
+.btn-small { min-height: 34px; padding: 6px 12px; font-size: 13px; border-radius: 10px; }
+.item-list { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 16px; }
+.item-row {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 12px;
+}
+.item-row.is-equipped { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(124, 108, 255, 0.2) inset; }
+.item-row.is-locked { opacity: 0.5; }
+.item-row-text { flex: 1; min-width: 0; }
+.item-row-name { display: flex; align-items: baseline; gap: 8px; font-size: 15px; font-weight: 600; }
+.item-row-price { font-size: 12px; font-weight: 400; color: #ffd166; }
+.item-row-desc { margin-top: 2px; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.items-actions { display: flex; gap: 10px; }
+.items-actions .btn { flex: 1; }
+.items .item:disabled { opacity: 0.4; }
+/* 调试面板显示时：页面内容可滚动到面板上方，避免按钮被遮挡（仅测试版） */
+body.has-debug-panel .page { padding-bottom: 40vh; }

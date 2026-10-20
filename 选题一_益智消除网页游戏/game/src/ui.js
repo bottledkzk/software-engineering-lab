@@ -21,6 +21,7 @@ let cellSize = 0;
 let boardRef = null;
 let inputLocked = false;
 let keyboardMode = false;          // 仅在键盘操作后为 true：鼠标/触屏点选不显示键盘光标
+let hint = null;                   // 道具「提示」高亮的一对格子 {a, b, until}
 let selection = null;
 let cursor = 0;
 let pointerStart = null;
@@ -37,8 +38,10 @@ export function mount(rootEl, h = {}) {
 
   on(dom.homeContinue, 'click', () => emit('onContinue'));
   on(dom.homeRank, 'click', () => handlers.onNavigate && handlers.onNavigate('rank'));
+  on(dom.homeItems, 'click', () => emit('onNavigateItems'));
   on(dom.homeSettings, 'click', () => handlers.onNavigate && handlers.onNavigate('settings'));
   on(dom.levelsBack, 'click', () => handlers.onNavigate && handlers.onNavigate('home'));
+  on(dom.levelsItems, 'click', () => emit('onNavigateItems'));
   on(dom.playBack, 'click', () => handlers.onNavigate && handlers.onNavigate('levels'));
   on(dom.resultBack, 'click', () => handlers.onNavigate && handlers.onNavigate('levels'));
   on(dom.resultRetry, 'click', () => emit('onRetry'));
@@ -46,10 +49,9 @@ export function mount(rootEl, h = {}) {
   on(dom.resultSteps, 'click', () => emit('onItem', 'steps'));
   on(dom.rankBack, 'click', () => handlers.onNavigate && handlers.onNavigate('home'));
   on(dom.settingsBack, 'click', () => handlers.onNavigate && handlers.onNavigate('home'));
-
-  on(dom.itemShuffle, 'click', () => emit('onItem', 'shuffle'));
-  on(dom.itemHammer, 'click', () => emit('onItem', 'hammer'));
-  on(dom.itemSteps, 'click', () => emit('onItem', 'steps'));
+  on(dom.itemsBack, 'click', () => emit('onItemsBack'));
+  on(dom.itemsDone, 'click', () => emit('onItemsBack'));
+  on(dom.itemsClear, 'click', () => emit('onLoadoutClear'));
 
   on(dom.guideNext, 'click', () => handlers.onGuideNext && handlers.onGuideNext());
   on(dom.guideSkip, 'click', () => handlers.onGuideSkip && handlers.onGuideSkip());
@@ -83,17 +85,19 @@ function collect(root) {
     pages: {
       home: q('page-home'), levels: q('page-levels'), play: q('page-play'),
       result: q('page-result'), rank: q('page-rank'), settings: q('page-settings'),
+      items: q('page-items'),
     },
     homeContinue: q('home-continue'), homeRank: q('home-rank'), homeSettings: q('home-settings'),
+    homeItems: q('home-items'),
     homeStatus: q('home-status'),
     levelsBack: q('levels-back'), levelsTabs: q('levels-tabs'), levelsGrid: q('levels-grid'),
-    levelsTotalStars: q('levels-total-stars'),
+    levelsTotalStars: q('levels-total-stars'), levelsItems: q('levels-items'),
     playBack: q('play-back'), playLevelName: q('play-level-name'), playMoves: q('play-moves'),
     playTarget: q('play-target'), playTargetLabel: q('play-target-label'), playScore: q('play-score'),
     playCoins: q('play-coins'), playTip: q('play-tip'), playCombo: q('play-combo'),
-    canvas: q('play-board'), items: q('play-items'),
-    itemShuffle: q('item-shuffle'), itemHammer: q('item-hammer'), itemSteps: q('item-steps'),
-    countShuffle: q('count-shuffle'), countHammer: q('count-hammer'), countSteps: q('count-steps'),
+    canvas: q('play-board'), items: q('play-items'), playItemsEmpty: q('play-items-empty'),
+    itemsBack: q('items-back'), itemsList: q('items-list'), itemsCoins: q('items-coins'),
+    itemsTip: q('items-tip'), itemsClear: q('items-clear'), itemsDone: q('items-done'),
     resultTitle: q('result-title'), resultStars: q('result-stars'), resultScore: q('result-score'),
     resultSub: q('result-sub'), resultNext: q('result-next'), resultRetry: q('result-retry'),
     resultSteps: q('result-steps'), resultBack: q('result-back'),
@@ -125,6 +129,7 @@ export function render(state) {
   renderResult(state);
   renderRank(state);
   renderSettings(state);
+  renderItemsPage(state);
   return { ok: true };
 }
 
@@ -197,19 +202,76 @@ function renderPlay(state) {
   if (dom.playCoins) dom.playCoins.textContent = String(state.save.coins);
   if (dom.playTarget) dom.playTarget.textContent = p.targetLabel;
   if (dom.playTargetLabel) dom.playTargetLabel.textContent = p.level.objectiveType === 'clear' ? '目标色' : '目标分';
-  const items = state.save.items || {};
-  if (dom.countShuffle) dom.countShuffle.textContent = `持有 ${items.shuffle || 0}`;
-  if (dom.countHammer) dom.countHammer.textContent = `持有 ${items.hammer || 0}`;
-  if (dom.countSteps) dom.countSteps.textContent = `持有 ${items.steps || 0}`;
+  renderItemsBar(state);
+  const modeItem = p.itemMode ? (state.itemsList || []).find((it) => it.id === p.itemMode) : null;
   if (dom.playTip) {
-    dom.playTip.textContent = p.itemMode === 'hammer'
-      ? '锤子模式：点击要消除的方块（点击空白处取消）'
+    dom.playTip.textContent = modeItem
+      ? `${modeItem.name}：点击目标方块生效（再点一次道具或按 Esc 取消）`
       : '点击或拖动交换相邻方块（键盘：方向键移动，空格选/换）';
   }
-  if (dom.canvas) dom.canvas.classList.toggle('is-selecting', p.itemMode === 'hammer');
-  if (dom.itemHammer) dom.itemHammer.classList.toggle('is-on', p.itemMode === 'hammer');
+  if (dom.canvas) dom.canvas.classList.toggle('is-selecting', !!p.itemMode);
   boardRef = p.board;
   layoutAndDraw(p.board);
+}
+
+/** 局内道具条：只渲染当前携带（最多 3 个）的道具，金币不足时置灰 */
+function renderItemsBar(state) {
+  const wrap = dom.items;
+  if (!wrap) return;
+  const p = state.play;
+  const list = state.itemsList || [];
+  const key = list.map((it) => it.id + ':' + it.price).join(',');
+  if (wrap.dataset.key !== key) {
+    wrap.innerHTML = '';
+    list.forEach((it) => {
+      const btn = document.createElement('button');
+      btn.className = 'btn item';
+      btn.id = 'item-' + it.id;
+      btn.dataset.item = it.id;
+      btn.innerHTML = `<span class="item-name">${it.name}</span><span class="item-cost">${it.price} 金币</span>`;
+      btn.addEventListener('click', () => emit('onItem', it.id));
+      wrap.appendChild(btn);
+    });
+    wrap.dataset.key = key;
+  }
+  Array.from(wrap.children).forEach((btn) => {
+    const it = list.find((x) => x.id === btn.dataset.item);
+    const afford = !it || state.save.coins >= it.price;
+    btn.disabled = !afford;
+    btn.classList.toggle('is-on', !!(p && p.itemMode === btn.dataset.item));
+  });
+  if (dom.playItemsEmpty) dom.playItemsEmpty.classList.toggle('hidden', list.length > 0);
+}
+
+/** 道具库页：6 个道具的解锁状态、价格、效果与携带开关 */
+function renderItemsPage(state) {
+  if (!dom.itemsList) return;
+  if (dom.itemsCoins) dom.itemsCoins.textContent = `${state.save.coins} 金币`;
+  const all = state.itemsAll || [];
+  const equipped = state.save.loadout || [];
+  const key = all.map((it) => `${it.id}:${it.unlocked ? 1 : 0}`).join(',') + '|' + equipped.join(',') + '|' + state.save.coins;
+  if (dom.itemsList.dataset.key === key) return;
+  dom.itemsList.dataset.key = key;
+  dom.itemsList.innerHTML = '';
+  all.forEach((it) => {
+    const on = equipped.includes(it.id);
+    const row = document.createElement('div');
+    row.className = 'item-row' + (it.unlocked ? '' : ' is-locked') + (on ? ' is-equipped' : '');
+    row.innerHTML = `<div class="item-row-text">
+        <div class="item-row-name">${it.name}<span class="item-row-price">${it.price} 金币</span></div>
+        <div class="item-row-desc">${it.desc}${it.unlocked ? '' : `　·　通关 ${it.unlock} 解锁`}</div>
+      </div>`;
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-small' + (on ? ' btn-primary' : '');
+    btn.textContent = on ? '已携带' : (it.unlocked ? '携带' : '未解锁');
+    btn.disabled = !it.unlocked;
+    btn.addEventListener('click', () => emit('onLoadoutToggle', it.id));
+    row.appendChild(btn);
+    dom.itemsList.appendChild(row);
+  });
+  if (dom.itemsTip) {
+    dom.itemsTip.textContent = `通关对应关卡解锁；每局最多携带 3 个（当前 ${equipped.length}/${3}），使用消耗金币。`;
+  }
 }
 
 function renderResult(state) {
@@ -225,9 +287,9 @@ function renderResult(state) {
   if (dom.resultSub) {
     const parts = [];
     if (r.won) parts.push(`本关目标 ${r.level.scoreTarget} 分`);
-    if (r.coinsGained) parts.push(`金币 +${r.coinsGained}`);
+    if (r.coinsGained) parts.push(`金币 +${r.coinsGained}${r.firstClear ? '（首次通关双倍）' : ''}`);
     if (r.isNewBest) parts.push('新纪录！');
-    if (r.stars === 3 && r.firstThreeStar) parts.push('首次三星奖励 +20');
+    if (!r.won && r.coinsGained === 0) parts.push('未通关无金币奖励');
     dom.resultSub.textContent = parts.join('　·　');
   }
   if (dom.resultNext) {
@@ -235,9 +297,13 @@ function renderResult(state) {
     dom.resultNext.classList.toggle('hidden', !r.won);
   }
   if (dom.resultSteps) {
-    const usable = !r.won && state.save.coins >= 200;
+    const stepsItem = (state.itemsAll || []).find((it) => it.id === 'steps');
+    const carried = (state.save.loadout || []).includes('steps');
+    const price = stepsItem ? stepsItem.price : 0;
+    const usable = !r.won && carried && state.save.coins >= price;
+    dom.resultSteps.textContent = `用「加五步」续玩（${price} 金币）`;
     dom.resultSteps.disabled = !usable;
-    dom.resultSteps.classList.toggle('hidden', r.won || state.save.items.steps > 0 === false && state.save.coins < 200);
+    dom.resultSteps.classList.toggle('hidden', r.won || !carried);
   }
 }
 
@@ -573,7 +639,7 @@ function onPointerDown(e) {
   const i = cellFromEvent(e);
   if (i === null) return;
   const p = lastRender.play;
-  if (p && p.itemMode === 'hammer') { emit('onHammerPick', i); return; }
+  if (p && p.itemMode) { emit('onItemPick', i); return; }
   if (inputLocked) { emit('onBlockedInput'); return; }
   pointerStart = { index: i, x: e.clientX, y: e.clientY };
   select(i);
@@ -604,7 +670,11 @@ function onPointerUp(e) {
 function onKeyDown(e) {
   if (!boardRef) return;
   if (/^Arrow(Left|Right|Up|Down)$/.test(e.key) || e.key === ' ' || e.key === 'Enter') keyboardMode = true;   // 键盘操作后显示光标
-  if (e.key === 'Escape') { selection = null; cursor = 0; drawBoard(boardRef, {}); return; }
+  if (e.key === 'Escape') {
+    const pl = lastRender.play;
+    if (pl && pl.itemMode) { emit('onItemModeCancel'); return; }   // 选格模式优先取消
+    selection = null; cursor = 0; drawBoard(boardRef, {}); return;
+  }
   const map = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
   if (map[e.key]) {
     e.preventDefault();
@@ -618,7 +688,7 @@ function onKeyDown(e) {
   if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
     const p = lastRender.play;
-    if (p && p.itemMode === 'hammer') { emit('onHammerPick', cursor); return; }
+    if (p && p.itemMode) { emit('onItemPick', cursor); return; }
     if (inputLocked) { emit('onBlockedInput'); return; }
     if (selection === null) { selection = cursor; drawBoard(boardRef, { cursor, selection }); return; }
     if (selection === cursor) { selection = null; drawBoard(boardRef, { cursor }); return; }
@@ -650,6 +720,21 @@ function neighbor(i, dr, dc) {
   const c = colOf(boardRef, i) + dc;
   if (r < 0 || c < 0 || r >= boardRef.rows || c >= boardRef.cols) return null;
   return idx(boardRef, r, c);
+}
+
+/* ==================== 道具提示（hint） ==================== */
+/** 高亮一对可交换的方块，3 秒后自动消失（道具「提示」） */
+export function showHint(a, b) {
+  hint = { a, b, until: now() + 3000 };
+  if (boardRef) drawBoard(boardRef, {});
+  setTimeout(() => { hint = null; if (boardRef) drawBoard(boardRef, {}); }, 3100);
+  return { ok: true };
+}
+
+export function clearHint() {
+  hint = null;
+  if (boardRef) drawBoard(boardRef, {});
+  return { ok: true };
 }
 
 /* ==================== API-36 横幅 ==================== */
