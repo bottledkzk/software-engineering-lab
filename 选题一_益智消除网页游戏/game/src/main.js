@@ -680,6 +680,7 @@ export function boot(doc = typeof document !== 'undefined' ? document : null) {
     stars: totalStars(state.save), audio: state.audioAvailable,
   });
   endBoot({ status: bootStatus });
+  if (doc.documentElement) doc.documentElement.setAttribute('data-app-booted', '1');
 
   // 首次用户交互后初始化音频（浏览器自动播放策略 + NFR-01f）
   const unlock = () => {

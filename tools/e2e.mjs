@@ -215,11 +215,13 @@ try {
       hudCoins: Number(String((document.getElementById('play-coins') || {}).textContent || '').replace(/[^0-9]/g, '')),
       stars: g.api.totalStars(g.state.save),
       demo: /demo=1/.test(location.search),
+      booted: document.documentElement.hasAttribute('data-app-booted'),
       hasPanel: !!document.getElementById('debug-panel'),
       logs: g.log.get().length,
     };
   })()`);
   check('启动完成且进入首页', boot.page === 'home', JSON.stringify(boot));
+  check('启动完成标记已写入（启动兜底不会误报）', boot.booted === true, String(boot.booted));
   check('演示存档已载入（解锁 2-6 / 860 金币）', boot.unlock === '2-6' && boot.coins === 860);
   check('调试面板已注入', boot.hasPanel === true);
   check('启动日志已采集', boot.logs > 0, `${boot.logs} 条`);
@@ -794,6 +796,7 @@ try {
   await sleep(1600);
   const prod = await evaluate(`({
     hasGame: typeof window.__game !== 'undefined',
+    booted: document.documentElement.hasAttribute('data-app-booted'),
     hasPanel: !!document.getElementById('debug-panel'),
     hasBadge: !!document.getElementById('dev-badge'),
     activePage: document.querySelector('.page.is-active') ? document.querySelector('.page.is-active').id : null,
@@ -804,6 +807,7 @@ try {
   check('正式版无"测试版"角标', prod.hasBadge === false);
   check('正式版标题不含"测试版"', !/测试版/.test(prod.title), prod.title);
   check('正式版正常启动到首页', prod.activePage === 'page-home', String(prod.activePage));
+  check('正式版启动完成标记已写入', prod.booted === true, String(prod.booted));
   await shot('12_production');
 } catch (e) {
   console.error('\n运行失败:', e && e.message ? e.message : e);
