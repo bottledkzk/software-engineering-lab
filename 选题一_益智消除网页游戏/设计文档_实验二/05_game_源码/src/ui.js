@@ -725,14 +725,20 @@ function animateTiles(cells, kind, dur) {
     anim = {
       kind, dur, board, cells,
       draw: (t) => {
-        const e = kind === 'swap' ? easeOut(t) : Math.sin(Math.PI * t);
+        // 交换与弹回都从“另一格”回到“本格”：t=1 时偏移必须归零。
+        // 旧实现弹回用 sin(πt)，末帧又回到另一格，视觉上等于没弹回。
+        const e = easeOut(t);
         drawBoard(board, { offsetFor: (i) => {
           if (i !== cells[0] && i !== cells[1]) return null;
           const from = i === cells[0] ? cells[1] : cells[0];
-          return lerpCell(from, i, kind === 'swap' ? e : e);
+          return lerpCell(from, i, e);
         } });
       },
-      done: resolve,
+      done: () => {
+        // 动画最后一帧由 rAF 绘制；这里再兜底重绘一次稳定态，避免残留偏移。
+        drawBoard(board, {});
+        resolve();
+      },
     };
     requestFrame();
   });

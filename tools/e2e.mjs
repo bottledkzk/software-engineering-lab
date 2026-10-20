@@ -476,6 +476,8 @@ try {
     for (let r = 0; r < b.rows; r++) {
       for (let c = 0; c < b.cols - 1; c++) {
         const i = r * b.cols + c;
+        // 选不同颜色的相邻对，便于用像素验证“真的弹回了”
+        if (b.cells[i].color === b.cells[i + 1].color) continue;
         const probe = g.api.cloneBoard(b);
         if (!g.api.resolveSwap(probe, i, i + 1).valid) return [i, i + 1];
       }
@@ -484,12 +486,38 @@ try {
   })()`);
   if (invalid) {
     const s0 = await hudState();
+    const visual0 = await evaluate(`(() => {
+      const g = window.__game, b = g.state.play.board;
+      g.ui.drawBoard(b, { selection: null, cursor: null });
+      const rgb = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+      return {
+        a: rgb(g.ui.CELL_COLORS[b.cells[${invalid[0]}].color % g.ui.CELL_COLORS.length]),
+        b: rgb(g.ui.CELL_COLORS[b.cells[${invalid[1]}].color % g.ui.CELL_COLORS.length]),
+      };
+    })()`);
     await evaluate(`window.__game.api.onSwap(${invalid[0]}, ${invalid[1]})`);
-    await sleep(500);
+    await sleep(700);
     const s1 = await hudState();
+    const visual1 = await evaluate(`(() => {
+      const g = window.__game, cv = document.getElementById('play-board');
+      const ctx = cv.getContext('2d');
+      const f = g.ui.getDebugFlags();
+      const dpr = window.devicePixelRatio || 1;
+      const cs = f.cellSize * dpr;
+      const read = (idx) => {
+        const r = Math.floor(idx / g.state.play.board.cols), c = idx % g.state.play.board.cols;
+        const d = ctx.getImageData(Math.floor((c + 0.5) * cs), Math.floor((r + 0.5) * cs), 1, 1).data;
+        return [d[0], d[1], d[2]];
+      };
+      return { a: read(${invalid[0]}), b: read(${invalid[1]}) };
+    })()`);
+    const near = (x, y) => Math.abs(x[0] - y[0]) <= 10 && Math.abs(x[1] - y[1]) <= 10 && Math.abs(x[2] - y[2]) <= 10;
     check('无效交换：不扣步数', s1.moves === s0.moves, `${s0.moves}→${s1.moves}`);
     check('无效交换：棋盘完全还原', s1.board === s0.board);
     check('无效交换：得分不变', s1.score === s0.score);
+    check('无效交换：动画结束后自动回到原棋盘（像素级）',
+      near(visual1.a, visual0.a) && near(visual1.b, visual0.b),
+      `expected ${JSON.stringify(visual0)} actual ${JSON.stringify(visual1)}`);
   } else {
     check('能构造出无效交换对（用于 AC-04 验证）', false);
   }
