@@ -5,7 +5,7 @@
 //   · 动画期间输入锁，丢弃新输入（UI-03、AC-07）
 //   · 颜色 + 形状双编码，灰度下仍可区分（FR-19、AC-32）
 
-import { ANIM } from './config.js';
+import { ANIM, STAR_THRESHOLDS } from './config.js';
 import { SP, idx, rowOf, colOf } from './board.js';
 import { CHAPTERS } from './levels.js';
 import * as log from './log.js';
@@ -30,6 +30,10 @@ let anim = null;
 let bannerTimer = null;
 let confirmResolver = null;
 let lastRender = {};
+let resultAnimKey = null;
+let resultRaf = 0;
+let resultTimers = [];
+let resultAnimRunning = false;
 
 /* ============================ API-32 mount ============================ */
 export function mount(rootEl, h = {}) {
@@ -103,6 +107,11 @@ function collect(root) {
     itemsBack: q('items-back'), itemsList: q('items-list'), itemsCoins: q('items-coins'),
     itemsTip: q('items-tip'), itemsClear: q('items-clear'), itemsDone: q('items-done'),
     resultTitle: q('result-title'), resultStars: q('result-stars'), resultScore: q('result-score'),
+    resultProgress: q('result-progress'), resultFill: q('result-fill'),
+    resultBestMarker: q('result-best-marker'), resultBestLabel: q('result-best-label'),
+    resultMarker1: q('result-marker-1'), resultMarker2: q('result-marker-2'), resultMarker3: q('result-marker-3'),
+    resultDot: q('result-dot'), resultGap: q('result-gap'),
+    resultBase: q('result-base'), resultBonus: q('result-bonus'), resultTotal: q('result-total'),
     resultSub: q('result-sub'), resultNext: q('result-next'), resultRetry: q('result-retry'),
     resultSteps: q('result-steps'), resultBack: q('result-back'),
     rankTabs: q('rank-tabs'), rankTabTotal: q('rank-tab-total'), rankTabLevel: q('rank-tab-level'),
@@ -311,14 +320,18 @@ function renderItemsPage(state) {
 
 function renderResult(state) {
   const r = state.result;
-  if (!r) return;
-  if (dom.resultTitle) dom.resultTitle.textContent = r.won ? '通关成功' : '步数用尽';
-  if (dom.resultStars) {
-    dom.resultStars.innerHTML = r.won
-      ? '★'.repeat(r.stars) + '☆'.repeat(3 - r.stars)
-      : '☆☆☆';
+  if (!r) {
+    cancelResultAnimation();
+    resultAnimKey = null;
+    return;
   }
-  if (dom.resultScore) dom.resultScore.textContent = String(r.total);
+
+  const model = buildResultModel(r);
+  if (dom.resultTitle) dom.resultTitle.textContent = r.won ? '通关成功' : '步数用尽';
+  if (dom.resultGap) {
+    dom.resultGap.textContent = model.gapText;
+    dom.resultGap.classList.toggle('is-fail', !r.won);
+  }
   if (dom.resultSub) {
     const parts = [];
     if (r.won) {
@@ -345,6 +358,245 @@ function renderResult(state) {
     dom.resultSteps.disabled = !usable;
     dom.resultSteps.classList.toggle('hidden', r.won || !carried);
   }
+
+  layoutResultMarkers(model);
+  ensureResultStars();
+  if (state.page === 'result' && model.key !== resultAnimKey) {
+    resultAnimKey = model.key;
+    startResultAnimation(model);
+  } else if (!resultAnimRunning) {
+    applyResultFinal(model);
+  }
+}
+
+/**
+ * 结算进度模型：分数、1★/2★/3★ 线、历史最高线、下一档差距。
+ * clear 关在“目标达成但总分低于 scoreTarget”时仍保底 1★，
+ * 因此把 1★ 线画在本次得分处并标注“通关保底”，避免进度条与星级矛盾。
+ */
+function buildResultModel(r) {
+  const total = Math.max(0, Number(r.total) || 0);
+  const level = r.level || {};
+  const scoreTarget = Math.max(1, Number(level.scoreTarget) || 1);
+  const lines = STAR_THRESHOLDS.map((k, i) => ({
+    star: i + 1, value: Math.round(scoreTarget * k), guaranteed: false,
+  }));
+  if (r.won && total < lines[0].value) {
+    lines[0].value = total;
+    lines[0].guaranteed = true;
+  }
+  const previousBest = Math.max(0, Number(r.previousBest) || 0);
+  const maxValue = Math.max(lines[2].value, total, previousBest, 1);
+  const scaleMax = maxValue * 1.06;
+  const pct = (v) => Math.max(0, Math.min(100, (v / scaleMax) * 100));
+  const won = !!r.won;
+  const stars = won ? Math.max(1, Math.min(3, Number(r.stars) || 1)) : 0;
+  const inLevelScore = Math.max(0, Math.min(total, Number.isFinite(Number(r.inLevelScore)) ? Number(r.inLevelScore) : (won ? 0 : total)));
+  const moveBonus = Math.max(0, total - inLevelScore);
+
+  let gapText;
+  if (!won) {
+    gapText = level.objectiveType === 'clear'
+      ? '未过关：目标色未达标'
+      : `未过关 · 距 1★ 还差 ${Math.max(0, lines[0].value - total)} 分`;
+  } else if (stars >= 3) {
+    const over = total - lines[2].value;
+    gapText = over > 0 ? `已达成 3★ · 超出 3★线 ${over} 分` : '已达成 3★';
+  } else {
+    const next = lines[stars] || lines[2];
+    gapText = `距 ${stars + 1}★ 还差 ${Math.max(0, next.value - total)} 分`;
+  }
+
+  return {
+    total, lines, previousBest, scaleMax, pct, won, stars,
+    inLevelScore, moveBonus, gapText,
+    key: [level.id, total, won, stars, previousBest, inLevelScore, moveBonus].join('|'),
+  };
+}
+
+function layoutResultMarkers(model) {
+  const markers = [dom.resultMarker1, dom.resultMarker2, dom.resultMarker3];
+  model.lines.forEach((line, i) => {
+    const marker = markers[i];
+    if (!marker) return;
+    marker.style.left = `${model.pct(line.value)}%`;
+    marker.dataset.value = String(line.value);
+    marker.title = line.guaranteed ? `1★ 通关保底：${line.value} 分` : `${line.star}★ 线：${line.value} 分`;
+    marker.classList.toggle('is-guaranteed', !!line.guaranteed);
+    const label = marker.querySelector('.result-star-label');
+    if (label) label.textContent = line.guaranteed ? '1★ 保底' : `${line.star}★`;
+  });
+
+  if (dom.resultBestMarker && dom.resultBestLabel) {
+    if (model.previousBest > 0) {
+      dom.resultBestMarker.classList.remove('hidden');
+      dom.resultBestMarker.style.left = `${model.pct(model.previousBest)}%`;
+      if (!dom.resultBestMarker.classList.contains('is-passed')) {
+        dom.resultBestLabel.textContent = `历史最高 ${model.previousBest}`;
+      }
+    } else {
+      dom.resultBestMarker.classList.add('hidden');
+      dom.resultBestMarker.classList.remove('is-passed');
+      if (dom.resultBestLabel) dom.resultBestLabel.textContent = `历史最高 ${model.previousBest}`;
+    }
+  }
+
+  if (dom.resultProgress) {
+    const lineText = model.lines
+      .map((l) => `${l.star}★线 ${l.value}${l.guaranteed ? '（通关保底）' : ''}`)
+      .join('；');
+    dom.resultProgress.setAttribute('aria-label',
+      `最终得分 ${model.total}；${lineText}${model.previousBest > 0 ? `；历史最高 ${model.previousBest}` : ''}`);
+  }
+}
+
+function ensureResultStars() {
+  if (!dom.resultStars) return;
+  if (dom.resultStars.children.length !== 3) {
+    dom.resultStars.innerHTML = [1, 2, 3]
+      .map((i) => `<span class="result-star" data-star="${i}">★</span>`)
+      .join('');
+  }
+}
+
+function setResultStars(earned, popIndex = -1) {
+  ensureResultStars();
+  if (!dom.resultStars) return;
+  Array.from(dom.resultStars.children).forEach((el, i) => {
+    const on = i < earned;
+    el.classList.toggle('is-earned', on);
+    if (on && i === popIndex) {
+      el.classList.remove('is-pop');
+      void el.offsetWidth;
+      el.classList.add('is-pop');
+      resultTimers.push(setTimeout(() => el.classList.remove('is-pop'), 650));
+    }
+  });
+  dom.resultStars.setAttribute('aria-label', `${earned} 星`);
+}
+
+function updateResultVisual(shown, model) {
+  if (dom.resultScore) dom.resultScore.textContent = String(shown);
+  if (dom.resultTotal) dom.resultTotal.textContent = String(shown);
+  if (dom.resultBase) dom.resultBase.textContent = String(Math.round(model.inLevelScore * (model.total > 0 ? shown / model.total : 0)));
+  if (dom.resultBonus) dom.resultBonus.textContent = String(Math.max(0, shown - Math.round(model.inLevelScore * (model.total > 0 ? shown / model.total : 0))));
+  if (dom.resultFill) dom.resultFill.style.width = `${model.pct(shown)}%`;
+  if (dom.resultDot) {
+    dom.resultDot.style.left = `${model.pct(shown)}%`;
+    dom.resultDot.classList.toggle('is-visible', shown > 0);
+  }
+}
+
+function bumpResultScore() {
+  if (!dom.resultScore) return;
+  dom.resultScore.classList.remove('is-bump');
+  void dom.resultScore.offsetWidth;
+  dom.resultScore.classList.add('is-bump');
+  resultTimers.push(setTimeout(() => dom.resultScore && dom.resultScore.classList.remove('is-bump'), 400));
+}
+
+function startResultAnimation(model) {
+  cancelResultAnimation();
+  ensureResultStars();
+  if (prefersReducedMotion() || typeof globalThis.requestAnimationFrame !== 'function') {
+    applyResultFinal(model);
+    return;
+  }
+  resultAnimRunning = true;
+  setResultStars(0);
+  updateResultVisual(0, model);
+  const markers = [dom.resultMarker1, dom.resultMarker2, dom.resultMarker3];
+  markers.forEach((m) => { if (m) m.classList.remove('is-reached', 'is-pulse'); });
+  if (dom.resultBestMarker) dom.resultBestMarker.classList.remove('is-passed');
+  if (dom.resultBestMarker && model.previousBest > 0) dom.resultBestMarker.classList.remove('hidden');
+  if (dom.resultBestLabel && model.previousBest > 0) dom.resultBestLabel.textContent = `历史最高 ${model.previousBest}`;
+
+  let lastEarned = 0;
+  let bestPassed = false;
+  const start = (globalThis.performance && performance.now) ? performance.now() : Date.now();
+  const duration = 1200;
+  const tick = (now) => {
+    if (!resultAnimRunning) return;
+    const t = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    const shown = Math.round(model.total * eased);
+    updateResultVisual(shown, model);
+
+    model.lines.forEach((line, i) => {
+      const m = markers[i];
+      if (!m) return;
+      if (shown >= line.value && !m.classList.contains('is-reached')) {
+        m.classList.add('is-reached');
+        if (model.won && i < model.stars) {
+          m.classList.remove('is-pulse');
+          void m.offsetWidth;
+          m.classList.add('is-pulse');
+          resultTimers.push(setTimeout(() => m.classList.remove('is-pulse'), 600));
+        }
+      }
+    });
+
+    const crossed = model.lines.filter((line) => shown >= line.value).length;
+    const earned = model.won ? Math.min(model.stars, crossed) : 0;
+    if (earned !== lastEarned) {
+      setResultStars(earned, earned - 1);
+      lastEarned = earned;
+      bumpResultScore();
+    }
+
+    if (model.previousBest > 0 && !bestPassed && model.total > model.previousBest && shown >= model.previousBest) {
+      bestPassed = true;
+      if (dom.resultBestMarker) dom.resultBestMarker.classList.add('is-passed');
+      if (dom.resultBestLabel) dom.resultBestLabel.textContent = `原最高 ${model.previousBest}（已超越）`;
+      bumpResultScore();
+    }
+
+    if (t < 1) {
+      resultRaf = globalThis.requestAnimationFrame(tick);
+      return;
+    }
+    resultAnimRunning = false;
+    applyResultFinal(model);
+  };
+  resultRaf = globalThis.requestAnimationFrame(tick);
+}
+
+function applyResultFinal(model) {
+  ensureResultStars();
+  setResultStars(model.stars);
+  updateResultVisual(model.total, model);
+  const markers = [dom.resultMarker1, dom.resultMarker2, dom.resultMarker3];
+  model.lines.forEach((line, i) => {
+    if (markers[i]) {
+      markers[i].classList.toggle('is-reached', model.total >= line.value);
+      markers[i].classList.remove('is-pulse');
+    }
+  });
+  if (dom.resultBestMarker && dom.resultBestLabel) {
+    if (model.previousBest > 0) {
+      dom.resultBestMarker.classList.remove('hidden');
+      dom.resultBestMarker.classList.toggle('is-passed', model.total > model.previousBest);
+      dom.resultBestLabel.textContent = model.total > model.previousBest
+        ? `原最高 ${model.previousBest}（已超越）`
+        : `历史最高 ${model.previousBest}`;
+    } else {
+      dom.resultBestMarker.classList.add('hidden');
+    }
+  }
+  resultAnimRunning = false;
+}
+
+function cancelResultAnimation() {
+  if (resultRaf && typeof globalThis.cancelAnimationFrame === 'function') globalThis.cancelAnimationFrame(resultRaf);
+  resultRaf = 0;
+  resultTimers.forEach((t) => clearTimeout(t));
+  resultTimers = [];
+  resultAnimRunning = false;
+}
+
+function prefersReducedMotion() {
+  return typeof window !== 'undefined' && window.matchMedia
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 function renderRank(state) {

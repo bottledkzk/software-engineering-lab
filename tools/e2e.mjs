@@ -223,6 +223,8 @@ try {
   check('演示存档已载入（解锁 2-6 / 860 金币）', boot.unlock === '2-6' && boot.coins === 860);
   check('调试面板已注入', boot.hasPanel === true);
   check('启动日志已采集', boot.logs > 0, `${boot.logs} 条`);
+  // 截图前收起调试面板，避免遮住结算页按钮（不影响日志采集）
+  await evaluate(`window.__game.log.panel(false)`);
   await shot('01_home');
 
   /* ---------- 2. 选关页：章节过滤 ---------- */
@@ -318,7 +320,28 @@ try {
   const clearResult = await evaluate(`document.getElementById('result-sub').textContent.replace(/\\s+/g, ' ').trim()`);
   check('消除型结算文案显示目标色而非目标分', /目标色/.test(clearResult) && /红圆/.test(clearResult) && /36/.test(clearResult),
     clearResult);
-  await sleep(250);
+  await sleep(1400);
+  const clearProgress = await evaluate(`(() => {
+    const g = window.__game;
+    const r = g.state.result;
+    const line1 = document.getElementById('result-marker-1');
+    return {
+      total: r.total,
+      score: document.getElementById('result-score').textContent,
+      line1: Number(line1.dataset.value),
+      guaranteed: /通关保底/.test(line1.title),
+      label1: line1.querySelector('.result-star-label').textContent,
+      earned: document.querySelectorAll('#result-stars .result-star.is-earned').length,
+      gap: document.getElementById('result-gap').textContent,
+      fill: document.getElementById('result-fill').style.width,
+    };
+  })()`);
+  check('消除型低分通关 1★ 线落在本次得分（通关保底）',
+    clearProgress.line1 === clearProgress.total && clearProgress.guaranteed && /保底/.test(clearProgress.label1),
+    JSON.stringify(clearProgress));
+  check('消除型结算点亮 1 星并给出下一档差距',
+    clearProgress.earned === 1 && /距 2★/.test(clearProgress.gap) && parseFloat(clearProgress.fill) > 0,
+    JSON.stringify(clearProgress));
   await shot('03d_clear_result');
   await evaluate(`(() => {
     const s = window.__game.state.save;
@@ -555,11 +578,13 @@ try {
     await shotClean('17_items_hint');
   }
 
-  // 4.7 结算：结果页 → 下一关
+  // 4.7 结算：结果页 → 下一关（并验证进度条/星级线/历史最高线）
   {
     const before = await hudState();
+    // 测试“超越历史最高线”的分支：把 2-3 历史最高临时降到 1000
+    await evaluate(`window.__game.state.save.bestScores['2-3'] = 1000`);
     await evaluate(`window.__game.api.onSettle(true)`);
-    await sleep(300);
+    await sleep(1500);
     const res = await evaluate(`(() => ({
       page: window.__game.state.page,
       stars: document.getElementById('result-stars').textContent,
@@ -569,10 +594,42 @@ try {
       levelId: window.__game.state.play.level.id,
       unlocked: window.__game.state.save.unlockedLevelId,
     }))()`);
+    const resultS2 = await evaluate(`(() => {
+      const r = window.__game.state.result;
+      const markers = [...document.querySelectorAll('.result-star-marker')];
+      const best = document.getElementById('result-best-marker');
+      return {
+        total: r.total,
+        previousBest: r.previousBest,
+        fill: document.getElementById('result-fill').style.width,
+        lines: markers.map((m) => Number(m.dataset.value)),
+        reached: markers.filter((m) => m.classList.contains('is-reached')).length,
+        earned: document.querySelectorAll('#result-stars .result-star.is-earned').length,
+        bestHidden: best.classList.contains('hidden'),
+        bestPassed: best.classList.contains('is-passed'),
+        bestLabel: document.getElementById('result-best-label').textContent,
+        gap: document.getElementById('result-gap').textContent,
+        base: Number(document.getElementById('result-base').textContent),
+        bonus: Number(document.getElementById('result-bonus').textContent),
+        totalText: Number(document.getElementById('result-total').textContent),
+        scoreText: Number(document.getElementById('result-score').textContent),
+      };
+    })()`);
     check('过关后进入结算页', res.page === 'result');
     check('结算页星级为 3 槽位', [...res.stars.trim()].length === 3, `"${res.stars}"`);
     check('结算页显示总分（数值）', Number(String(res.score).replace(/[^\d]/g, '')) > 0, res.score);
     check('结算页显示金币奖励', /\+/.test(res.sub) || /金币/.test(res.sub), res.sub);
+    check('结算进度条已填充且三条星级线存在',
+      parseFloat(resultS2.fill) > 0 && resultS2.lines.length === 3 && resultS2.lines.every((v) => v > 0),
+      JSON.stringify(resultS2));
+    check('结算得分/局内分/步数奖励一致',
+      resultS2.scoreText === resultS2.total && resultS2.base + resultS2.bonus === resultS2.totalText && resultS2.totalText === resultS2.total,
+      JSON.stringify(resultS2));
+    check('达到 1★ 并点亮 1 颗星', resultS2.earned === 1 && resultS2.reached >= 1, JSON.stringify(resultS2));
+    check('历史最高线显示且标记为已超越',
+      !resultS2.bestHidden && resultS2.bestPassed && /1000/.test(resultS2.bestLabel),
+      `${resultS2.bestLabel} / hidden=${resultS2.bestHidden} / passed=${resultS2.bestPassed}`);
+    check('给出距下一星的差距', /距 2★/.test(resultS2.gap), resultS2.gap);
     await shot('08_result');
     if (!res.nextDisabled) {
       await click('result-next');
@@ -606,6 +663,39 @@ try {
     check('同一关重复通关只给基础金币（+10）', r2.coins - r1.coins === 10, `Δ${r2.coins - r1.coins}`);
     check('重复通关不再标注双倍', !/双倍/.test(r2.sub), r2.sub);
   }
+
+  // 4.9 三星结算：三条线全部点亮 + 历史最高线被超越
+  {
+    await evaluate(`window.__game.api.startLevel('1-1')`);
+    await waitFor(`window.__game.state.page === 'play'`);
+    await evaluate(`window.__game.state.play.inLevelScore = 20000`);
+    await evaluate(`window.__game.api.onSettle(true)`);
+    await waitFor(`window.__game.state.page === 'result'`);
+    await sleep(1500);
+    const three = await evaluate(`(() => {
+      const markers = [...document.querySelectorAll('.result-star-marker')];
+      const best = document.getElementById('result-best-marker');
+      return {
+        total: window.__game.state.result.total,
+        earned: document.querySelectorAll('#result-stars .result-star.is-earned').length,
+        reached: markers.filter((m) => m.classList.contains('is-reached')).length,
+        fill: document.getElementById('result-fill').style.width,
+        bestPassed: best.classList.contains('is-passed'),
+        bestLabel: document.getElementById('result-best-label').textContent,
+        gap: document.getElementById('result-gap').textContent,
+      };
+    })()`);
+    check('高分结算点亮 3 星且三条线全部达到',
+      three.earned === 3 && three.reached === 3, JSON.stringify(three));
+    check('三星结算进度条接近满格', parseFloat(three.fill) > 90, three.fill);
+    check('三星结算超越 1-1 历史最高线',
+      three.bestPassed && /16400/.test(three.bestLabel), `${three.bestLabel} / passed=${three.bestPassed}`);
+    check('三星结算显示已达成 3★', /已达成 3★/.test(three.gap), three.gap);
+    await shot('08b_result_3star');
+    await evaluate(`window.__game.api.navigate('levels')`);
+    await sleep(200);
+  }
+
   // 4.5 排行榜：两榜都有内容且可切换
   {
     await evaluate(`window.__game.api.navigate('rank')`);
