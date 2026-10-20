@@ -849,6 +849,21 @@ function drawBoard(board, opts = {}) {
     ctx.stroke();
     ctx.setLineDash([]);
   }
+  // 道具「提示」：高亮一对可交换的方块（3 秒后自动消失）
+  if (hint && now() < hint.until) {
+    [hint.a, hint.b].forEach((hi) => {
+      if (hi === null || hi === undefined || !board.cells[hi]) return;
+      const hr = rowOf(board, hi);
+      const hc = colOf(board, hi);
+      ctx.beginPath();
+      ctx.strokeStyle = '#ffd166';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 5]);
+      roundRect(ctx, hc * cellSize + 2, hr * cellSize + 2, cellSize - 4, cellSize - 4, cellSize * 0.22);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+  }
   ctx.restore();
 }
 
@@ -985,7 +1000,7 @@ function escapeHtml(s) {
 }
 
 export const __internals = {
-  drawBoard, layoutAndDraw, CELL_COLORS, GUIDE_TEXT,
+  drawBoard, layoutAndDraw, CELL_COLORS, GUIDE_TEXT, showHint, clearHint,
   /** 仅测试版使用：暴露渲染/输入状态，便于端到端断言 */
   getDebugFlags: () => ({ keyboardMode, cellSize, selection, cursor, inputLocked }),
 };

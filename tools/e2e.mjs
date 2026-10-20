@@ -178,6 +178,22 @@ try {
     }
     throw new Error('等待超时: ' + label);
   }
+  async function panel(show) {
+    await evaluate(`(() => {
+      const el = document.getElementById('debug-panel');
+      if (!el) return false;
+      el.classList.toggle('hidden', ${show ? 'false' : 'true'});
+      return true;
+    })()`).catch(() => {});
+  }
+  /** 拍用户视角截图：临时收起调试面板 */
+  async function shotClean(name) {
+    await panel(false);
+    await sleep(80);
+    const file = await shot(name);
+    await panel(true);
+    return file;
+  }
   async function shot(name) {
     const r = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     const file = path.join(shots, name.endsWith('.png') ? name : name + '.png');
@@ -196,6 +212,7 @@ try {
       page: g.state.page,
       unlock: g.state.save.unlockedLevelId,
       coins: g.state.save.coins,
+      hudCoins: Number(String((document.getElementById('play-coins') || {}).textContent || '').replace(/[^0-9]/g, '')),
       stars: g.api.totalStars(g.state.save),
       demo: /demo=1/.test(location.search),
       hasPanel: !!document.getElementById('debug-panel'),
@@ -342,6 +359,7 @@ try {
       moves: g.state.play ? g.state.play.movesLeft : null,
       score: g.state.play ? g.state.play.inLevelScore : null,
       coins: g.state.save.coins,
+      hudCoins: Number(String((document.getElementById('play-coins') || {}).textContent || '').replace(/[^0-9]/g, '')),
       items: g.state.save.items,
       level: g.state.play ? g.state.play.level.id : null,
       board: g.state.play ? g.state.play.board.cells.map((c) => (c ? c.color + ':' + (c.special || '') : '-')).join('|') : '',
@@ -384,7 +402,7 @@ try {
     check('道具库展示 6 个道具', rows === 6, `rows=${rows}`);
     check('演示存档下只有「加五步」未解锁（1 个锁定）', locked === 1, `locked=${locked}`);
     check('默认已携带 3 个（=上限）', equipped === 3, `equipped=${equipped}`);
-    await shot('15_items_page');
+    await shotClean('15_items_page');
     const addMore = await evaluate(`window.__game.api.toggleLoadoutItem('hint')`);
     check('携带已满时拒绝继续添加', addMore && addMore.ok === false, JSON.stringify(addMore));
   }
@@ -398,7 +416,7 @@ try {
     await waitFor(`window.__game.state.page === 'play'`);
     const btns = await evaluate(`[...document.querySelectorAll('#play-items .item')].map((b) => b.dataset.item)`);
     check('局内道具条只显示携带的 3 个', btns.join(',') === 'hint,shuffle,hammer', btns.join(','));
-    await shot('16_items_bar');
+    await shotClean('16_items_bar');
   }
 
   // 4.4 锤子：确认 → 选格（不扣费）→ 点中才扣 60 → 动画结束
@@ -433,13 +451,29 @@ try {
 
   // 4.6 提示：不扣费前先确认可用（提示无需确认，直接扣 20 并高亮）
   {
+    const countGold = () => evaluate(`(() => {
+      const cv = document.getElementById('play-board');
+      const ctx = cv.getContext('2d');
+      const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        // 提示框颜色 #ffd166，与方块里的芥末黄（约 230,180,70）区分开
+        if (d[i] > 248 && d[i + 1] > 204 && d[i + 1] < 216 && d[i + 2] > 96 && d[i + 2] < 110) n++;
+      }
+      return n;
+    })()`);
     const s0 = await hudState();
+    const gold0 = await countGold();
     await evaluate(`window.__game.api.useItem('hint')`);
     await sleep(300);
     const s1 = await hudState();
+    const gold1 = await countGold();
     check('提示扣 20 金币', s1.coins === s0.coins - 20, `${s0.coins}→${s1.coins}`);
+    check('HUD 金币已同步刷新', s1.hudCoins === s1.coins, `HUD=${s1.hudCoins} state=${s1.coins}`);
+    check('提示在棋盘上画出金色高亮框', gold1 > gold0 + 300, `金色像素 ${gold0}→${gold1}`);
+    check('未提示时无提示色（基线接近 0）', gold0 < 500, `基线 ${gold0}`);
     check('提示不消耗步数、不改棋盘', s1.moves === s0.moves && s1.board === s0.board);
-    await shot('17_items_hint');
+    await shotClean('17_items_hint');
   }
 
   // 4.7 结算：结果页 → 下一关

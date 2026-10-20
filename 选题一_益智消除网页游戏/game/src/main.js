@@ -471,6 +471,7 @@ export async function useItem(type) {
   log.info('item.use', { type, price: item.price, kind: item.kind });
 
   if (item.kind === 'hint') {
+    renderAll();                      // 扣费后立即刷新 HUD 金币
     const moves = p ? findLegalMoves(p.board) : [];
     if (!moves.length) {
       toast('当前没有可用交换');
